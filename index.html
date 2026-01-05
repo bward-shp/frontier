@@ -79,6 +79,39 @@
     <script>
         'use strict';
         
+        // === LOGGING SYSTEM ===
+        const logBuffer = [];
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+            const timestamp = performance.now().toFixed(2);
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+            ).join(' ');
+            logBuffer.push(`[${timestamp}ms] ${message}`);
+            originalConsoleLog.apply(console, args); // Also log to console
+        };
+        
+        function downloadLogs() {
+            const logText = logBuffer.join('\n');
+            const blob = new Blob([logText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `game-log-${Date.now()}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // Auto-download logs after 5 seconds of gameplay
+        let autoDownloadTimer = null;
+        function scheduleAutoDownload() {
+            if (autoDownloadTimer) clearTimeout(autoDownloadTimer);
+            autoDownloadTimer = setTimeout(() => {
+                downloadLogs();
+                console.log('[LOG SYSTEM] Auto-downloaded log file');
+            }, 5000);
+        }
+        
         // ============================================================================
         // FRONTIER - Advanced Strategic Territory Simulation
         // A real-time strategy game featuring AI nations, territorial control,
@@ -87,6 +120,10 @@
         
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+        
+        // GLOBAL GAME STATE VARIABLES
+        let gameSpeed = 1.0; // Game speed multiplier (0.05 to 5.0)
+        let speedChangeFlash = 0; // Flash effect when speed changes
         
         // ============================================================================
         // AUDIO SYSTEM - Advanced spatial audio with synthesis and TTS
@@ -97,35 +134,61 @@
         let audioChannels = {};
         let cachedVoices = [];
         let qualityVoices = [];
+        let announcerVoiceIndex = null; // Dedicated voice for announcer (hoisted to avoid TDZ)
+        let nationVoices = [
+            { pitch: 0.3, rate: 1.1, voiceIndex: null, fx: { reverb: 0.3, lowpass: 600, distortion: 0.1 } },    // NERVA - deep, echoey, aggressive
+            { pitch: 1.8, rate: 1.6, voiceIndex: null, fx: { reverb: 0.1, highpass: 2000, delay: 0.15 } },      // ZELUS - bright, crisp, quick echo
+            { pitch: 0.35, rate: 1.5, voiceIndex: null, fx: { reverb: 0.5, lowpass: 500, distortion: 0.2 } },   // VALKYR - cavernous, dark, intense
+            { pitch: 1.7, rate: 1.05, voiceIndex: null, fx: { reverb: 0, bandpass: 1000, distortion: 0.15 } }, // PRAXEN - thin, radio-like, harsh
+            { pitch: 1.9, rate: 1.7, voiceIndex: null, fx: { reverb: 0.4, highpass: 1500, delay: 0.2 } },      // SOLARIS - ethereal, bright, spacious
+            { pitch: 0.25, rate: 1.0, voiceIndex: null, fx: { reverb: 0.2, lowpass: 400, distortion: 0.25 } }, // BARONIX - very deep, gritty, industrial
+            { pitch: 1.5, rate: 1.55, voiceIndex: null, fx: { reverb: 0.15, highpass: 1800 } },                // ATRION - clean, bright, clear
+            { pitch: 1.75, rate: 1.65, voiceIndex: null, fx: { reverb: 0.35, delay: 0.25, distortion: 0.05 } },// TRANSGUILD - echoey, mysterious
+            { pitch: 0.3, rate: 1.05, voiceIndex: null, fx: { reverb: 0.6, lowpass: 550 } },                   // BENEDICTA - deep, very spacious
+            { pitch: 1.85, rate: 1.6, voiceIndex: null, fx: { reverb: 0, highpass: 2500, distortion: 0.3 } },  // TYRAX - screaming, harsh, aggressive
+            { pitch: 1.6, rate: 1.6, voiceIndex: null, fx: { reverb: 0.25, bandpass: 1200 } },                 // WAYLANE - mid-range, telephonic
+            { pitch: 1.65, rate: 1.55, voiceIndex: null, fx: { reverb: 0.3, highpass: 1600, delay: 0.1 } },    // OMNIFORGE - clean, modern, slight echo
+            { pitch: 1.7, rate: 1.5, voiceIndex: null, fx: { reverb: 0.1, bandpass: 1500, distortion: 0.1 } }, // CYBRYNE - robotic, filtered
+            { pitch: 1.4, rate: 1.5, voiceIndex: null, fx: { reverb: 0.2, highpass: 1400 } },                   // SOYLUX - warm, pleasant
+            { pitch: 0.35, rate: 1.1, voiceIndex: null, fx: { reverb: 0.4, lowpass: 650, delay: 0.12 } },      // TYCORE - deep, ominous, delayed
+            { pitch: 0.28, rate: 1.02, voiceIndex: null, fx: { reverb: 0.5, lowpass: 450, distortion: 0.35 } } // HEGEMYR - maximum deep, heavily distorted
+        ];
         
         /**
-         * Load and cache available speech synthesis voices
-         * Prioritizes high-quality voices (Google, Microsoft, Neural, etc.)
+         * Load and cache available speech synthesis voices  
+         * USE ALL VOICES - maximum base variety for effect processing!
          */
         function loadVoices() {
             const voices = window.speechSynthesis.getVoices();
             if (voices.length > 0) {
                 cachedVoices = voices;
                 
-                qualityVoices = voices.filter(v => 
-                    v.name.includes('Google') || 
-                    v.name.includes('Microsoft') ||
-                    v.name.includes('Enhanced') ||
-                    v.name.includes('Premium') ||
-                    v.name.includes('Neural')
-                );
+                // Use ALL voices for maximum base variety
+                qualityVoices = voices;
                 
-                if (qualityVoices.length === 0) qualityVoices = voices;
-                
-                console.log(`✓ Loaded ${voices.length} voices (${qualityVoices.length} high-quality)`);
+                console.log(`Voice system: ${voices.length} loaded (all enabled)`);
+                voices.forEach((v, idx) => {
+                    const local = v.localService ? 'L' : 'R';
+                    console.log(`  [${idx}] ${local} ${v.name} (${v.lang})`);
+                });
             }
         }
         
         if (window.speechSynthesis) {
             loadVoices();
-            window.speechSynthesis.onvoiceschanged = loadVoices;
-            window.addEventListener('load', loadVoices);
-            setTimeout(loadVoices, 100);
+            assignNationVoices();
+            window.speechSynthesis.onvoiceschanged = () => {
+                loadVoices();
+                assignNationVoices();
+            };
+            window.addEventListener('load', () => {
+                loadVoices();
+                assignNationVoices();
+            });
+            setTimeout(() => {
+                loadVoices();
+                assignNationVoices();
+            }, 100);
         }
         
         /**
@@ -939,6 +1002,15 @@
                     .replace(/TYRANEL/gi, 'Teeranel')
                     .replace(/HEGEMYR/gi, 'Hegemyr');
 
+                // Apply nation-specific flavoring for stronger perceived differences
+                spokenText = flavorSpeech(spokenText, nationId, priority);
+
+                // Robotic chatter path (Web Audio synth) bypasses speechSynthesis
+                if (priority === 'chatter') {
+                    playRoboticChatter(spokenText, nationId);
+                    return;
+                }
+
                 // Check for duplicates in all queues
                 const isDuplicate = announcerState.priorityQueue.some(item => item.text === spokenText) ||
                                    announcerState.normalQueue.some(item => item.text === spokenText) ||
@@ -1062,21 +1134,15 @@
                     utterance.pitch = voiceSettings.pitch;
                     utterance.volume = 1.0;
                     
-                    // Select best available voice for this nation
-                    if (voices.length > 1) {
-                        // Try to get diverse voices for different nations
-                        let voiceIndex = (templateIdx * 3) % voices.length; // Better distribution
-                        
-                        // Prefer certain voice types for character
-                        const maleVoices = voices.filter(v => v.name.includes('Male') || v.name.includes('David') || v.name.includes('Mark'));
-                        const femaleVoices = voices.filter(v => v.name.includes('Female') || v.name.includes('Zira') || v.name.includes('Susan'));
-                        
-                        if (templateIdx % 2 === 0 && maleVoices.length > 0) {
-                            utterance.voice = maleVoices[Math.floor(templateIdx / 2) % maleVoices.length];
-                        } else if (femaleVoices.length > 0) {
-                            utterance.voice = femaleVoices[Math.floor(templateIdx / 2) % femaleVoices.length];
+                    // Use assigned voice index for this nation (ensures unique voices)
+                    if (voices.length > 0 && nationVoices[templateIdx]) {
+                        const assignedVoiceIdx = nationVoices[templateIdx].voiceIndex;
+                        if (assignedVoiceIdx !== null && assignedVoiceIdx < voices.length) {
+                            utterance.voice = voices[assignedVoiceIdx];
+                            console.log(`Nation ${nation.name} using voice: ${voices[assignedVoiceIdx].name}`);
                         } else {
-                            utterance.voice = voices[voiceIndex];
+                            // Fallback to distributed assignment
+                            utterance.voice = voices[templateIdx % voices.length];
                         }
                     }
                     
@@ -1096,20 +1162,18 @@
                         window.speechSynthesis.speak(utterance);
                     }, 50);
                 } else {
-                    // Generic announcer voice - use best quality available
+                    // Generic announcer voice - use assigned announcer voice
                     const utterance = new SpeechSynthesisUtterance(announcementText);
                     utterance.rate = 0.95; // Slightly slower for clarity
                     utterance.pitch = 0.85; // Lower pitch for authority
                     utterance.volume = 1.0;
                     
-                    if (voices.length > 0) {
-                        // Prefer deep male voice for generic announcer
-                        const deepVoice = voices.find(v => 
-                            v.name.includes('David') || 
-                            v.name.includes('Mark') ||
-                            (v.name.includes('Male') && v.lang.includes('en'))
-                        );
-                        utterance.voice = deepVoice || voices[0];
+                    if (voices.length > 0 && announcerVoiceIndex !== null && announcerVoiceIndex < voices.length) {
+                        utterance.voice = voices[announcerVoiceIndex];
+                        console.log(`Announcer using voice: ${voices[announcerVoiceIndex].name}`);
+                    } else if (voices.length > 0) {
+                        // Fallback to first voice
+                        utterance.voice = voices[0];
                     }
 
                     utterance.onend = () => {
@@ -1299,6 +1363,7 @@
                 this.productionRate = isCapital ? 6.0 : 10.0; // seconds per unit (faster for more action)
                 this.capturingNation = -1; // Only one nation can have progress
                 this.captureProgress = 0; // Single progress value
+                this.captureShieldTimer = 0; // Temporary capture immunity (used when capitals re-emerge)
                 
                 // Economic properties
                 // Tier: 0=poor, 1=normal, 2=rich, 3=capital
@@ -1348,11 +1413,10 @@
                 // Check nearby units for capture
                 const captureRadius = 40;
                 const nationPresence = {};
-                
+
                 nations.forEach(nation => {
-                    // Allow capitulated nations with units to capture (resistance fighters)
                     if (nation.units.length === 0) return;
-                    
+
                     let count = 0;
                     nation.units.forEach(unit => {
                         const dx = unit.x - this.x;
@@ -1362,7 +1426,15 @@
                         // Units on rough terrain or rivers can still capture nodes
                         if (dist < captureRadius) count++;
                     });
-                    if (count > 0) nationPresence[nation.id] = count;
+
+                    if (count > 0) {
+                        // Resistance fighters (capitulated nations) get CAPTURE BOOST to help them consolidate
+                        // This lets them re-establish despite empire buffs
+                        const resistanceWeight = nation.capitulated ? 0.5 : 1.0; // Increased from 0.4 to 0.5
+                        // Higher cap for resistance to strengthen consolidation
+                        const weightedPresence = Math.min(count, nation.capitulated ? 12 : count) * resistanceWeight; // Increased from 8 to 12
+                        nationPresence[nation.id] = weightedPresence;
+                    }
                 });
                 
                 // Determine dominant nation
@@ -1373,6 +1445,11 @@
                         maxPresence = presence;
                         dominantNation = parseInt(nationId);
                     }
+                }
+
+                // Tick down any capture shield (prevents instant dogpiles on fresh capitals)
+                if (this.captureShieldTimer > 0) {
+                    this.captureShieldTimer = Math.max(0, this.captureShieldTimer - dt);
                 }
                 
                 // Capture logic - only one nation can have progress at a time
@@ -1397,8 +1474,20 @@
                     return stance === DIPLOMATIC_STANCE.WAR;
                 };
                 
-                if (dominantNation >= 0 && dominantNation !== this.owner && canCapture(dominantNation, this.owner)) {
+                const captureShielded = this.captureShieldTimer > 0 && this.owner >= 0;
+
+                if (captureShielded) {
+                    // Block capture progress during shield; keep node stable while resistance sets up
+                    this.capturingNation = -1;
+                    this.captureProgress = 0;
+                } else if (dominantNation >= 0 && dominantNation !== this.owner && canCapture(dominantNation, this.owner)) {
                     const captureThreshold = this.isCapital ? 36 : 30;
+
+                    // Dominance penalty: empires near total control capture slower everywhere
+                    const totalNodeCount = Math.max(1, nodes.length);
+                    const dominantNodeCount = nodes.filter(n => n.owner === dominantNation).length;
+                    const dominantShare = dominantNodeCount / totalNodeCount;
+                    const dominancePenalty = 1 / (1 + Math.max(0, dominantShare - 0.45) * 15); // Starts at 45% share; 70% -> ~0.32x
                     
                     // DEFENSIVE BUFFS: Citadel (+40% defense), Bastion (+60% defense)
                     let defensiveMultiplier = 1.0;
@@ -1444,7 +1533,10 @@
                             // Speed scales with number of units present (more units = faster capture)
                             this.capturingNation = dominantNation;
                             const bonuses = getArtifactBonuses(dominantNation);
-                            this.captureProgress += dt * maxPresence * 1.5 * bonuses.nodeCapture; // Artifact bonus speeds capture
+                            // RESISTANCE BOOST: Capitulated nations capture 20% faster to help consolidation
+                            const capturingNation = nations[dominantNation];
+                            const resistanceBoost = (capturingNation && capturingNation.capitulated) ? 1.2 : 1.0;
+                            this.captureProgress += dt * maxPresence * 1.5 * bonuses.nodeCapture * resistanceBoost * dominancePenalty;
                         }
                     } else if (this.capturingNation !== dominantNation) {
                         // DIFFERENT NATION IS DOMINANT - Contest the capture!
@@ -1785,9 +1877,12 @@
                                 this.isCapital = true;
                                 this.economicTier = 3;
                                 this.resourceMultiplier = 2.5;
+                                this.controlStrength = 100; // Start fully fortified
+                                this.captureShieldTimer = 30; // 30s of capture immunity to set up
                                 capturingNation.capital = this;
                                 capturingNation.capitulated = false;
-                                capturingNation.resources = 50;
+                                capturingNation.resurrectionImmunity = Math.max(capturingNation.resurrectionImmunity || 0, 45); // Fast rebuild window
+                                capturingNation.resources = MAX_RESOURCES; // Full stockpile to restart economy
                                 
                                 // Check if this is post-IMPACT survivor or normal resistance
                                 const isPostImpact = game.impactCount > 0 && !capturingNation.resurrectionCount;
@@ -1799,27 +1894,33 @@
                                     logGameEvent('resurrection', `${capturingNation.name} resistance establishes new capital`, 'high');
                                 }
                                 
-                                // RESURRECTION ARMY - spawn 30 units quickly around the new capital
+                                // RESURRECTION ARMY - spawn reinforced garrison around the new capital
                                 const capitalX = this.x;
                                 const capitalY = this.y;
                                 const capitalNode = this;
                                 
-                                for (let i = 0; i < 25; i++) {
+                                for (let i = 0; i < 40; i++) {
                                     setTimeout(() => {
                                         const angle = Math.random() * Math.PI * 2;
-                                        const dist = 25 + Math.random() * 35; // Spawn around capital
+                                        const dist = 25 + Math.random() * 45; // Spawn around capital
                                         const spawnX = capitalX + Math.cos(angle) * dist;
                                         const spawnY = capitalY + Math.sin(angle) * dist;
                                         
                                         const resurrectionUnit = new Unit(spawnX, spawnY, dominantNation);
+                                        resurrectionUnit.health = 160;
+                                        resurrectionUnit.strength = 1.25;
+                                        resurrectionUnit.veterancy = 35;
+                                        resurrectionUnit.morale = 1.1;
+                                        resurrectionUnit.damageBonus = 0.15;
+                                        resurrectionUnit.defenseBonus = 0.1;
                                         resurrectionUnit.jitterCooldown = 10.0;
                                         resurrectionUnit.capitalMissileCooldown = 10.0;
                                         resurrectionUnit.jitterPositions = [];
                                         resurrectionUnit.role = 'garrison';
                                         resurrectionUnit.targetNode = capitalNode;
-                                        resurrectionUnit.targetCommitmentTime = 30.0; // Guard the capital
+                                        resurrectionUnit.targetCommitmentTime = 40.0; // Guard the capital longer
                                         capturingNation.units.push(resurrectionUnit);
-                                    }, i * 100); // Spawn every 100ms for 3 seconds total
+                                    }, i * 80); // Spread over ~3 seconds
                                 }
                             }
                             
@@ -2117,9 +2218,15 @@
                         const nodeCount = nodes.filter(n => n.owner === this.owner).length;
                         // 1 node = 1.0x, 2 = 1.15x, 3 = 1.30x, 5 = 1.60x, 10 = 2.35x (capped at 2.5x)
                         const nodeMultiplier = Math.min(2.5, 1 + (nodeCount - 1) * 0.15); // Reduced from 0.5 to 0.15
+
+                        // Dominance penalty: heavy production slow for empires past 50% share
+                        const totalNodeCount = Math.max(1, nodes.length);
+                        const dominantShare = nodeCount / totalNodeCount;
+                        const productionDominancePenalty = 1 / (1 + Math.max(0, dominantShare - 0.50) * 14); // At 70% share ~0.26x
                         
                         // Apply territory bonus (can reduce production time up to 15%)
                         let productionMultiplier = nodeMultiplier * (1 + Math.min(territoryBonus, 0.15)); // Reduced from 0.2
+                        productionMultiplier *= productionDominancePenalty;
                         
                         // RESURRECTION IMMUNITY: Start fast, slow down as immunity expires
                         // Ramps from 24x to 3x speed (0.25s → 2s per unit)
@@ -2322,19 +2429,19 @@
                     
                     // Nation stats text with better spacing
                     ctx.fillStyle = nation.color;
-                    ctx.font = 'bold 11px monospace';
+                    ctx.font = 'bold 15px monospace';
                     ctx.textAlign = 'left';
                     ctx.fillText(`${nation.name}`, this.x + 19, this.y - 14);
                     
                     // Display cryptic name under nation name if capital has one
                     if (this.crypticName) {
                         ctx.fillStyle = 'rgba(255, 215, 0, 0.95)'; // Brighter gold
-                        ctx.font = 'bold 9px monospace';
+                        ctx.font = 'bold 12px monospace';
                         ctx.fillText(`[${this.crypticName}]`, this.x + 19, this.y - 3);
                     }
                     
                     const statsY = hasCapitalName ? this.y + 9 : this.y - 1;
-                    ctx.font = '9px monospace'; // Slightly smaller for cleaner look
+                    ctx.font = '12px monospace'; // Slightly smaller for cleaner look
                     ctx.fillStyle = '#ffffff';
                     ctx.fillText(`${nation.units.length}u ${modDisplay} ${nodeCount}n`, this.x + 19, statsY);
                     ctx.fillText(`${Math.floor(nation.resources)}⚡ ${balanceSign}${balance.toFixed(1)}/s`, this.x + 19, statsY + 11);
@@ -2361,7 +2468,7 @@
                         const lowTrust = allied > 0 && Object.values(nation.allianceTrust || {}).some(t => t < 30);
                         ctx.fillStyle = recentCrimes > 0 ? '#ff8800' : 
                                        (exhaustion > 70 || lowTrust ? '#ff5555' : '#aaaaaa');
-                        ctx.font = '8px monospace'; // Smaller font for diplomatic info
+                        ctx.font = '12px monospace'; // Smaller font for diplomatic info
                         ctx.fillText(dipStatus, this.x + 19, dipY);
                     }
                     
@@ -3231,7 +3338,7 @@
                         // Studied Strategic Plans (NO weapon requirement) - TIMED BONUS
                         // Only apply once even if multiple studied plans exist (prevent stacking)
                         else if (artifact.type === 'plans' && artifact.isStudied && artifact.bonusActive && bonuses.unitSpeed === 1.0) {
-                            bonuses.unitSpeed = 2.5; // Studied Plans = 2.5x speed (temporary, non-stacking)
+                            bonuses.unitSpeed = 1.8; // Studied Plans = 1.8x speed (nerfed to spare resistance)
                         }
                         
                         // Decrypted Keycode alone
@@ -3688,7 +3795,8 @@
                     this.x = this.carrier.x;
                     this.y = this.carrier.y;
                     
-                    // Check if near storage locations - auto-deposit for storage (increased radius for faster securing)
+                    // Check if near storage locations - auto-deposit for storage (includes spear for secure keeping)
+                    // Superweapons will retrieve from storage when needed
                     // Storage locations: named nodes AND unlocked safe facilities AND capitals
                     const storageLocations = [];
                     
@@ -5852,6 +5960,7 @@
         const NODE_INCOME_CAPITAL = 1.0;         // Capital nodes generate more (reduced 50%)
         const UNIT_PRODUCTION_COST = 50;         // Resources to produce one unit (increased 5x)
         const UNIT_UPKEEP = 0.5;                 // Resources per second per unit (reduced for sustainability)
+        const UNIT_UPKEEP_RESISTANCE = 0.1;      // Resistance pays only 20% upkeep (guerrilla efficiency)
         const DEFICIT_ATTRITION_RATE = 1;        // HP damage per second when in deficit (reduced from 5)
         const MAX_RESOURCES = 200;               // Resource stockpile cap (reduced from 500)
         
@@ -5943,6 +6052,10 @@
             const nodeCount = nodes.filter(n => n.owner === nation.id).length;
             const OPTIMAL_UNIT_COUNT = Math.max(50, nodeCount * UNITS_PER_NODE); // Min 50, scales with nodes
             
+            // RESISTANCE BONUS: Capitulated nations get stronger comeback modifier
+            // They need advantage to reestablish against dominant empires
+            const resistanceBonus = nation.capitulated ? 1.5 : 1.0; // 50% stronger comeback for resistance
+            
             // Reduced comeback mechanics - weaker inverse relationship
             // With half the map (~22 nodes): optimal = 110 units
             // At optimal: 1.0x strength (100%)
@@ -5953,7 +6066,7 @@
             if (ratio <= 1.0) {
                 // Fewer units = slightly stronger (capped at 1.3x instead of unlimited)
                 const boost = 1.0 / ratio; // e.g., 50 units = 2.0x
-                return Math.min(1.3, boost); // Cap at 30% bonus instead of 100%
+                return Math.min(1.3 * resistanceBonus, boost * resistanceBonus); // Cap scales with resistance bonus
             } else {
                 // More units = weaker (inversely proportional)
                 // Additional penalty based on how long they've been overpopulated
@@ -5964,7 +6077,7 @@
                 const timePenalty = Math.min(nation.overpopTimer / 60, 1.0); // 0 to 1 over 60 seconds
                 
                 // Gradually reduce from base modifier toward 0% based on time
-                return baseModifier * (1.0 - timePenalty * 0.95); // Can reach as low as 5% of base
+                return baseModifier * (1.0 - timePenalty * 0.95) * resistanceBonus; // Can reach as low as 5% of base
             }
         }
         
@@ -6021,27 +6134,296 @@
         const NATION_COUNT = 4; // Configure how many nations spawn (2-8)
         
         const nations = [];
-        
-        // Voice configurations for each nation - EXTREME variations to ensure NO similarity to announcer
-        // Announcer is pitch 0.8, rate 0.85 - all nations must be dramatically different
-        const nationVoices = [
-            { pitch: 0.3, rate: 1.1 },    // NERVA - ultra deep, faster
-            { pitch: 1.8, rate: 1.6 },    // ZELUS - ultra high, fast
-            { pitch: 0.35, rate: 1.5 },   // VALKYR - ultra deep, fast
-            { pitch: 1.7, rate: 1.05 },   // PRAXEN - ultra high, faster
-            { pitch: 1.9, rate: 1.7 },    // SOLARIS - maximum high, fast
-            { pitch: 0.25, rate: 1.0 },   // BARONIX - maximum deep, faster
-            { pitch: 1.5, rate: 1.55 },   // ATRION - very high, fast
-            { pitch: 1.75, rate: 1.65 },  // TRANSGUILD - ultra high, fast
-            { pitch: 0.3, rate: 1.05 },   // BENEDICTA - ultra deep, faster
-            { pitch: 1.85, rate: 1.6 },   // TYRAX - ultra ultra high, fast
-            { pitch: 1.6, rate: 1.6 },    // WAYLANE - very high, fast
-            { pitch: 1.65, rate: 1.55 },  // OMNIFORGE - very high, fast
-            { pitch: 1.7, rate: 1.5 },    // CYBRYNE - very high, moderate
-            { pitch: 1.4, rate: 1.5 },    // SOYLUX - high, moderate
-            { pitch: 0.35, rate: 1.1 },   // TYCORE - ultra deep, faster
-            { pitch: 0.28, rate: 1.02 }   // HEGEMYR - maximum deep, faster
+
+        // Nation-specific speech flavor profiles for perceived differentiation
+        const speechFlavors = [
+            { prefixes: ['Command override online', 'Doctrine live', 'Priority channel open', 'Flagship relay live'], suffixes: ['execute the order', 'press forward now', 'no delays—move', 'drive through their line'], caps: false }, // NERVA
+            { prefixes: ['Diplomatic channel open', 'Harmonic link secured', 'Envoy line active', 'Accord desk online'], suffixes: ['negotiate terms', 'coordinate routes', 'find terms quickly', 'secure safe passage'], caps: false }, // ZELUS
+            { prefixes: ['Strike wing ready', 'Vector locked in', 'Attack run inbound', 'Target window open'], suffixes: ['on target now', 'finish the run', 'weapons free', 'cut them loose'], caps: false }, // VALKYR
+            { prefixes: ['Analysis brief ready', 'Interrogation link open', 'Data trace active', 'Psychopass scan running'], suffixes: ['analyze now', 'question them hard', 'flag anomalies fast', 'profile the threat'], caps: false }, // PRAXEN
+            { prefixes: ['Solar edict issued', 'Stellar mandate live', 'Helios line open', 'Apex corona clear'], suffixes: ['hold orbit steady', 'stay radiant and calm', 'keep the light burning', 'flare and press ahead'], caps: false }, // SOLARIS
+            { prefixes: ['Refinery order confirmed', 'Pressure lock engaged', 'Foundry line hot', 'Industrial channel live'], suffixes: ['breach their line', 'keep crushing forward', 'tear it open now', 'feed the mills'], caps: true }, // BARONIX
+            { prefixes: ['Warden call active', 'Noble decree issued', 'Citadel line holding', 'Aegis relay clear'], suffixes: ['uphold the charge', 'hold the line', 'shield them all', 'stand in place'], caps: false }, // ATRION
+            { prefixes: ['Void syndicate channel open', 'Guild channel open', 'Smuggler band linked', 'Ledger line active'], suffixes: ['extract the asset', 'trade confirmed', 'deal closed', 'invoice cleared'], caps: false }, // TRANSGUILD
+            { prefixes: ['Sanctum hymn rising', 'Cloistered line clear', 'Litany channel open', 'Chalice call steady'], suffixes: ['offer blessings', 'hold fast together', 'keep the vow', 'grace to you all'], caps: false }, // BENEDICTA
+            { prefixes: ['Replicant vector online', 'Directive acknowledged', 'Splice chain active', 'Clone stack ready'], suffixes: ['replicate now', 'scale production', 'copy and deploy', 'iterate again'], caps: true }, // VYRAX
+            { prefixes: ['Salvage ping live', 'Breaker crew on station', 'Cutter band ready', 'Rig channel hot'], suffixes: ['strip it clean', 'secure the haul', 'bag the scrap', 'load the crates'], caps: false }, // LANGWAYS
+            { prefixes: ['Forge net online', 'Alloy stream flowing', 'Hammer relay armed', 'Bloom line bright'], suffixes: ['hammer down hard', 'forge ahead now', 'strike now', 'temper the edge'], caps: true }, // OMNISCENE
+            { prefixes: ['Matrix node online', 'Synthesis core ready', 'Core logic primed', 'Signal bus clear'], suffixes: ['compute the set', 'compile now', 'optimize the path', 'execute the set'], caps: false }, // CYBRYNE
+            { prefixes: ['Provision line steady', 'Tide swell moving', 'Harvest relay ready', 'Supply crest rising'], suffixes: ['harvest on time', 'sustain the flow', 'fill the stores', 'keep the flow steady'], caps: false }, // VOLUX
+            { prefixes: ['Cartel cipher open', 'Greenlight issued', 'Shadow docket active', 'Quiet auction live'], suffixes: ['lock it in now', 'claim the lot', 'close the book', 'take the margin'], caps: true }, // TYRANEL
+            { prefixes: ['Regime order issued', 'Iron decree standing', 'Command tribunal seated', 'Blood writ filed'], suffixes: ['eradicate the target', 'enforce the writ', 'leave none standing', 'make it final'], caps: true } // HEGEMYR
         ];
+        
+        // Apply nation-specific phrasing to amplify perceived voice differences
+        function flavorSpeech(text, nationId, priority = 'normal') {
+            if (nationId === null || nationId === undefined) return text;
+            if (nationId < 0 || nationId >= nations.length) return text;
+            const templateIdx = nations[nationId]?.templateIndex ?? nationId;
+            const flavor = speechFlavors[templateIdx % speechFlavors.length];
+            if (!flavor) return text;
+
+            let out = text;
+
+            // Lightly spice with prefixes/suffixes (reduced frequency to avoid annoyance)
+            if (flavor.prefixes && Math.random() < 0.18) {
+                const p = flavor.prefixes[Math.floor(Math.random() * flavor.prefixes.length)];
+                out = `${p}: ${out}`;
+            }
+            if (flavor.suffixes && Math.random() < 0.18) {
+                const s = flavor.suffixes[Math.floor(Math.random() * flavor.suffixes.length)];
+                const pause = ' ...'; // Add a short verbal pause before suffix
+                out = `${out}${pause} ${s}`;
+            }
+
+            // Priority-specific tweaks
+            if (priority === 'chatter' && Math.random() < 0.3) {
+                out = out.replace(/\./g, '…');
+            }
+
+            if (flavor.caps) out = out.toUpperCase();
+            return out;
+        }
+
+        /**
+         * Apply audio effects to speech synthesis
+         * Creates unique voice characters through Web Audio processing
+         */
+        function applySpeechEffects(utterance, fxProfile) {
+            if (!audioCtx || !fxProfile) return utterance;
+            
+            // Store FX profile on utterance for later processing
+            // Note: We can't directly process speechSynthesis output in real-time,
+            // but we can pre-configure the utterance with effect hints
+            utterance.fxProfile = fxProfile;
+            
+            return utterance;
+        }
+        
+        /**
+         * Create an audio effect chain for post-processing
+         * This would be applied if we could capture TTS output
+         */
+        function createEffectChain(fxProfile) {
+            if (!audioCtx) return null;
+            
+            const chain = [];
+            
+            // REVERB - spacious/echoey effect
+            if (fxProfile.reverb && fxProfile.reverb > 0) {
+                const convolver = audioCtx.createConvolver();
+                const reverbGain = audioCtx.createGain();
+                reverbGain.gain.value = fxProfile.reverb;
+                
+                // Create simple impulse response for reverb
+                const sampleRate = audioCtx.sampleRate;
+                const length = sampleRate * 2; // 2 second reverb
+                const impulse = audioCtx.createBuffer(2, length, sampleRate);
+                
+                for (let channel = 0; channel < 2; channel++) {
+                    const channelData = impulse.getChannelData(channel);
+                    for (let i = 0; i < length; i++) {
+                        channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
+                    }
+                }
+                
+                convolver.buffer = impulse;
+                chain.push({ type: 'reverb', node: convolver, gain: reverbGain });
+            }
+            
+            // FILTERS - shape frequency response
+            if (fxProfile.lowpass) {
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.value = fxProfile.lowpass;
+                filter.Q.value = 1.0;
+                chain.push({ type: 'lowpass', node: filter });
+            }
+            
+            if (fxProfile.highpass) {
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'highpass';
+                filter.frequency.value = fxProfile.highpass;
+                filter.Q.value = 1.0;
+                chain.push({ type: 'highpass', node: filter });
+            }
+            
+            if (fxProfile.bandpass) {
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = fxProfile.bandpass;
+                filter.Q.value = 3.0; // Narrow band for telephone effect
+                chain.push({ type: 'bandpass', node: filter });
+            }
+            
+            // DISTORTION - aggressive/gritty effect
+            if (fxProfile.distortion && fxProfile.distortion > 0) {
+                const distortion = audioCtx.createWaveShaper();
+                const amount = fxProfile.distortion * 100;
+                const samples = 44100;
+                const curve = new Float32Array(samples);
+                
+                for (let i = 0; i < samples; i++) {
+                    const x = (i * 2) / samples - 1;
+                    curve[i] = ((3 + amount) * x * 20) / (Math.PI + amount * Math.abs(x));
+                }
+                
+                distortion.curve = curve;
+                distortion.oversample = '4x';
+                chain.push({ type: 'distortion', node: distortion });
+            }
+            
+            // DELAY - echo effect
+            if (fxProfile.delay && fxProfile.delay > 0) {
+                const delay = audioCtx.createDelay(1.0);
+                delay.delayTime.value = fxProfile.delay;
+                const feedback = audioCtx.createGain();
+                feedback.gain.value = 0.3;
+                const delayGain = audioCtx.createGain();
+                delayGain.gain.value = 0.5;
+                
+                chain.push({ type: 'delay', node: delay, feedback, gain: delayGain });
+            }
+            
+            return chain;
+        }
+
+        // Robotic Web Audio chatter voice (self-contained, fully FX-able)
+        function playRoboticChatter(text, nationId = null) {
+            if (!audioCtx) initAudioContext();
+            if (!audioCtx || !Audio.enabled) return;
+
+            const now = audioCtx.currentTime;
+            const words = Math.max(1, text.split(/\s+/).length);
+            const duration = Math.min(3.0, 0.08 * words + 0.6);
+
+            const templateIdx = nationId !== null && nationId >= 0 && nationId < nations.length
+                ? (nations[nationId].templateIndex ?? nationId)
+                : 0;
+            const fx = nationVoices[templateIdx % nationVoices.length]?.fx || {};
+
+            // Base carrier
+            const carrier = audioCtx.createOscillator();
+            carrier.type = 'sawtooth';
+            const baseFreq = 180 + (templateIdx * 25) % 140; // spread timbre per nation
+            carrier.frequency.value = baseFreq;
+
+            // Formant filter
+            const band = audioCtx.createBiquadFilter();
+            band.type = 'bandpass';
+            band.frequency.value = fx.bandpass || fx.highpass || fx.lowpass || 1000;
+            band.Q.value = 3.0;
+
+            // Vibrato
+            const lfo = audioCtx.createOscillator();
+            lfo.frequency.value = 7 + (templateIdx % 3);
+            const lfoGain = audioCtx.createGain();
+            lfoGain.gain.value = 12;
+            lfo.connect(lfoGain);
+            lfoGain.connect(carrier.frequency);
+
+            // Distortion
+            const distortion = audioCtx.createWaveShaper();
+            const amount = (fx.distortion ? fx.distortion * 80 : 40);
+            const samples = 44100;
+            const curve = new Float32Array(samples);
+            for (let i = 0; i < samples; i++) {
+                const x = (i * 2) / samples - 1;
+                curve[i] = ((3 + amount) * x * 20) / (Math.PI + amount * Math.abs(x));
+            }
+            distortion.curve = curve;
+            distortion.oversample = '4x';
+
+            // Delay/echo
+            const delay = audioCtx.createDelay(1.0);
+            delay.delayTime.value = fx.delay || 0.12;
+            const feedback = audioCtx.createGain();
+            feedback.gain.value = 0.25;
+            delay.connect(feedback);
+            feedback.connect(delay);
+
+            // Reverb (lightweight impulse)
+            const convolver = audioCtx.createConvolver();
+            const irLen = audioCtx.sampleRate * 1.2;
+            const ir = audioCtx.createBuffer(2, irLen, audioCtx.sampleRate);
+            for (let ch = 0; ch < 2; ch++) {
+                const data = ir.getChannelData(ch);
+                for (let i = 0; i < irLen; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 3);
+                }
+            }
+            convolver.buffer = ir;
+            const reverbGain = audioCtx.createGain();
+            reverbGain.gain.value = fx.reverb ? fx.reverb : 0.25;
+
+            // Envelope
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.0, now);
+            gain.gain.linearRampToValueAtTime(0.9, now + 0.02);
+            gain.gain.linearRampToValueAtTime(0.0, now + duration);
+
+            // Routing
+            carrier.connect(band);
+            band.connect(distortion);
+            distortion.connect(delay);
+            delay.connect(reverbGain);
+            reverbGain.connect(convolver);
+            convolver.connect(gain);
+            delay.connect(gain); // dry+echo
+            gain.connect(audioChannels.events);
+
+            carrier.start(now);
+            lfo.start(now);
+            carrier.stop(now + duration);
+            lfo.stop(now + duration);
+        }
+        
+        /**
+         * Assign unique system voices to each nation and the announcer
+         * Call this after voices are loaded
+         */
+        function assignNationVoices() {
+            if (!nationVoices || nationVoices.length === 0) return;
+            if (qualityVoices.length === 0) return;
+            
+            // Use ALL available voices for maximum diversity
+            const availableVoices = qualityVoices.length > 0 ? qualityVoices : cachedVoices;
+            
+            if (availableVoices.length === 0) return;
+            
+            // Assign announcer voice (use first available)
+            announcerVoiceIndex = 0;
+            
+            // Assign unique voices to each nation template
+            // Cycle through ALL voices to maximize variety
+            for (let i = 0; i < nationVoices.length; i++) {
+                // Skip announcer voice (index 0), distribute others across all voices
+                const voiceOffset = 1; // Start after announcer
+                nationVoices[i].voiceIndex = voiceOffset + (i % Math.max(1, availableVoices.length - voiceOffset));
+                
+                // Wrap around if needed
+                if (nationVoices[i].voiceIndex >= availableVoices.length) {
+                    nationVoices[i].voiceIndex = nationVoices[i].voiceIndex % availableVoices.length;
+                }
+            }
+            
+            console.log(`✓ Assigned ${availableVoices.length} voices:`);
+            console.log(`  Announcer: ${availableVoices[announcerVoiceIndex]?.name || 'default'}`);
+            
+            // Log all available voices for debugging
+            availableVoices.forEach((voice, idx) => {
+                console.log(`  [${idx}] ${voice.name} (${voice.lang})`);
+            });
+            
+            // Log nation assignments
+            // Note: This logs template assignments, actual nation mapping happens after nation creation
+            for (let i = 0; i < Math.min(nationVoices.length, 16); i++) {
+                const voiceIdx = nationVoices[i].voiceIndex;
+                if (voiceIdx !== null && voiceIdx < availableVoices.length) {
+                    console.log(`  Template ${i}: ${availableVoices[voiceIdx].name} (pitch ${nationVoices[i].pitch}, rate ${nationVoices[i].rate})`);
+                }
+            }
+        }
         
         // Helper function to calculate color difference (Euclidean distance in RGB space)
         function colorDistance(color1, color2) {
@@ -6509,7 +6891,7 @@
                 // Command & control
                 this.targetNode = null;
                 this.waypointNode = null; // Intermediate node to route through for pathfinding
-                this.orderTimer = 2.0; // Start with 2.0 to get first orders quickly (triggers at 2.5)
+                this.orderTimer = 3.0; // Start high to receive orders immediately on first update
                 this.targetCommitmentTime = 0; // How long we've been targeting current node
                 this.role = 'garrison'; // garrison, border, offensive, captureArtifact
                 this.onFrontline = false;
@@ -6696,6 +7078,10 @@
             }
             
             receiveOrders(nodes, allUnits, nation, nearbyEnemies = []) {
+                console.log(`receiveOrders called: nation=${nation.name}, myNodes=${nation.cachedMyNodes?.length || 0}, uncontrolled=${nation.cachedUncontrolledNodes?.length || 0}`);
+                // Alias to avoid repeated lookups and TDZ issues
+                const myNation = nation;
+                
                 // RESISTANCE FIGHTERS: If capitulated without capital, only capture nearby nodes
                 if (nation.capitulated && !nation.capital) {
                     // Resistance fighters don't zoom across map - only capture nearby nodes
@@ -7463,14 +7849,34 @@
                 // These are the nodes "in sight" that units can reach immediately
                 // DIVERSIFY targeting - spread units across multiple objectives instead of clustering
                 // VULNERABILITY: Prioritize nodes storing artifacts (steal enemy items!)
+                // RESISTANCE BOOST: Non-capitulated nations raid overextended empires more aggressively
                 const nodesStoringArtifacts = nodes.filter(n => {
                     const stored = artifacts.filter(a => a.storedAtNode === n);
                     return stored.length > 0 && n.owner !== this.nation;
                 });
                 
+                // Calculate resistance against artifact holder (boost raid priority)
+                let artifactRaidBonus = 1.0;
+                if (nodesStoringArtifacts.length > 0 && !myNation.capitulated && myNation.capital) {
+                    // Check if artifact holder is overextended
+                    for (const storageNode of nodesStoringArtifacts) {
+                        const holderNation = nations[storageNode.owner];
+                        if (holderNation) {
+                            const holderNodeCount = nodes.filter(n => n.owner === holderNation.id).length;
+                            const totalNodes = nodes.filter(n => n.owner !== -1).length;
+                            const holderShare = totalNodes > 0 ? holderNodeCount / totalNodes : 0;
+                            // If they control 60%+ of map, increase raid urgency
+                            if (holderShare >= 0.6) {
+                                artifactRaidBonus = 1.5 + (holderShare - 0.6) * 2.0; // 1.5x to 2.3x boost
+                            }
+                        }
+                    }
+                }
+                
                 for (const storageNode of nodesStoringArtifacts) {
                     const dist = Math.hypot(storageNode.x - this.x, storageNode.y - this.y);
-                    if (dist < 600 && hasPathTo(this.x, this.y, storageNode.x, storageNode.y, Math.min(400, dist + 50))) {
+                    const maxRaidRange = 600 * artifactRaidBonus; // Extended range for high resistance
+                    if (dist < maxRaidRange && hasPathTo(this.x, this.y, storageNode.x, storageNode.y, Math.min(400, dist + 50))) {
                         // HIGH PRIORITY - steal enemy artifacts!
                         this.role = 'expand';
                         this.targetNode = storageNode;
@@ -7586,6 +7992,11 @@
             }
             
             update(dt, allUnits, nodes) {
+                // SIMPLE DEBUG: Is update even called?
+                if (frameCount % 60 === 0 && Math.random() < 0.1) {
+                    console.log(`[UPDATE] nation=${this.nation} dt=${dt.toFixed(4)}`);
+                }
+
                 // Safety check: Fix NaN positions immediately
                 if (!isFinite(this.x) || !isFinite(this.y)) {
                     const nation = nations[this.nation];
@@ -8033,11 +8444,14 @@
                             
                             // COMBAT - fight enemies we're touching
                             if (this.battleCooldown <= 0) {
+                                // Grab nation once to avoid temporal dead zone on use
+                                const myNation = nations[this.nation];
                                 const strengthMod = getUnitStrengthModifier(myNation);
                                 const baseAttack = this.strength * strengthMod;
                                 const enemyNation = nations[other.nation];
                                 const enemyStrengthMod = enemyNation ? getUnitStrengthModifier(enemyNation) : 1.0;
                                 const enemyIsSuperweapon = other.isSuperweapon === true;
+                                const otherNation = enemyNation; // Alias for clarity below
 
                                 // MONUMENT buff: +15% strength within 300 units of Monument node
                                 const myMonumentBonus = getMonumentBonus(this.x, this.y, this.nation);
@@ -8056,8 +8470,25 @@
                                 // Apply artifact bonuses
                                 const myArtifactBonuses = getArtifactBonuses(this.nation);
                                 const enemyArtifactBonuses = getArtifactBonuses(other.nation);
-                                damage *= myArtifactBonuses.unitDamage;
-                                enemyDamage *= enemyArtifactBonuses.unitDamage;
+                                const defenderIsResistance = otherNation && (otherNation.capitulated || (otherNation.resurrectionImmunity || 0) > 0);
+                                const attackerIsResistance = myNation && (myNation.capitulated || (myNation.resurrectionImmunity || 0) > 0);
+
+                                // Clamp artifact damage multipliers when resistance is on the receiving end
+                                const myDamageBonus = defenderIsResistance ? Math.min(myArtifactBonuses.unitDamage, 1.3) : myArtifactBonuses.unitDamage;
+                                const enemyDamageBonus = attackerIsResistance ? Math.min(enemyArtifactBonuses.unitDamage, 1.3) : enemyArtifactBonuses.unitDamage;
+
+                                damage *= myDamageBonus;
+                                enemyDamage *= enemyDamageBonus;
+                                
+                                // RESISTANCE COMBAT BONUS - capitulated nations fight with guerrilla advantage
+                                if (myNation && myNation.capitulated) {
+                                    damage *= 1.4; // +40% damage when resistance
+                                    enemyDamage *= 0.75; // Take 25% less damage when resistance
+                                }
+                                if (otherNation && otherNation.capitulated) {
+                                    enemyDamage *= 1.4; // Enemy resistance also gets bonus
+                                    damage *= 0.75; // We take less damage from resistance
+                                }
                                 
                                 // VULNERABILITY: Artifact carriers deal 50% less damage (distracted, protecting cargo)
                                 if (carryingArtifact) {
@@ -8621,7 +9052,9 @@
                     }
                     // Receive new orders periodically (less frequent now that connectivity is separate)
                     this.orderTimer += dt;
+                    console.log(`[ORDER CHECK] orderTimer=${this.orderTimer.toFixed(3)}, threshold=2.5, willCall=${this.orderTimer > 2.5}`);
                     if (this.orderTimer > 2.5) {
+                        console.log(`[CALLING receiveOrders] nation=${this.nation}`);
                         this.receiveOrders(nodes, allUnits, nations[this.nation], nearbyEnemies);
                         this.orderTimer = 0;
                     }
@@ -9647,13 +10080,13 @@
                     this.vy *= 0.3;
                 }
                 
-                // Speed limit - deliberate foot soldier movement
-                let maxSpeed = this.morale < 0.3 ? 1.5 : 0.7; // Reduced from 2.0/1.0 for slower pacing
+                // Speed limit - deliberate foot soldier movement (pulled back for pacing)
+                let maxSpeed = this.morale < 0.3 ? 4.5 : 2.8; // Was 15/7; slower base to avoid zooming at 1x
                 
                 // ARTIFACT CARRIER SPEED BOOST - units securing valuable items move much faster!
                 // (using carryingArtifact from earlier in function)
                 if (carryingArtifact) {
-                    maxSpeed *= 2.0; // 2x speed boost (reduced from 3.5x for pacing)
+                    maxSpeed *= 1.5; // Moderate boost so couriers move but don’t blur
                 }
                 
                 // CAPITAL PROXIMITY SPEED BOOST - units near capital move faster (supply lines)
@@ -9664,17 +10097,13 @@
                     const maxDist = 800; // Reference distance
                     
                     if (distToCapital < maxDist * 0.3) {
-                        // Very close to capital (within 30% radius) = 1.5x speed
-                        maxSpeed *= 1.5; // Reduced from 2.5x
+                        maxSpeed *= 1.2; // Tighter bonus near capital
                     } else if (distToCapital < maxDist * 0.5) {
-                        // Close to capital (30-50% radius) = 1.3x speed
-                        maxSpeed *= 1.3; // Reduced from 2.0x
+                        maxSpeed *= 1.1;
                     } else if (distToCapital < maxDist * 0.7) {
-                        // Medium distance (50-70% radius) = 1.15x speed
-                        maxSpeed *= 1.15; // Reduced from 1.5x
+                        maxSpeed *= 1.05;
                     } else if (distToCapital < maxDist) {
-                        // Far from capital (70-100% radius) = 1.05x speed
-                        maxSpeed *= 1.05; // Reduced from 1.2x
+                        maxSpeed *= 1.02;
                     }
                     // Beyond maxDist = normal speed (no bonus)
                 }
@@ -10302,9 +10731,11 @@
                 this.lastX = this.x;
                 this.lastY = this.y;
                 
-                // MOVE - apply velocity to position (framerate-dependent for original speed)
-                const newX = this.x + this.vx * gameSpeed;
-                const newY = this.y + this.vy * gameSpeed;
+                // MOVE - apply velocity to position
+                // Velocity is accumulated force impulse (not traditional per-second velocity)
+                // Apply gameSpeed to scale movement with time multiplier
+                const newX = this.x + this.vx;
+                const newY = this.y + this.vy;
                 
                 // Artifact carriers PHASE THROUGH mountains - no checks, just move
                 const isCarryingArtifact = artifacts.find(a => a.carrier === this);
@@ -10318,9 +10749,9 @@
                     this.y = newY;
                 }
                 
-                // Clamp to boundaries
-                this.x = Math.max(0, Math.min(canvas.width, this.x));
-                this.y = Math.max(0, Math.min(canvas.height, this.y));
+                // Clamp to boundaries - use world dimensions, not screen dimensions
+                this.x = Math.max(0, Math.min(canvas.width * WORLD_SCALE, this.x));
+                this.y = Math.max(0, Math.min(canvas.height * WORLD_SCALE, this.y));
                 
                 // Boundaries already clamped above after movement
             }
@@ -10733,6 +11164,7 @@
             capitalNode.controlStrength = 1.0;
             nodes.push(capitalNode);
             nation.capital = capitalNode;
+            nation.capitulated = false; // Capital established - nation is now active
             
             // Create 2 nearby economic nodes on land - NEUTRAL at start
             for (let j = 0; j < 2; j++) {
@@ -10993,19 +11425,37 @@
         let fps = 0;
         let frameTimeSum = 0;
         let frameTimeCount = 0;
-        let gameSpeed = 1.0; // Game speed multiplier (0.05 to 5.0)
-        let speedChangeFlash = 0; // Flash effect when speed changes
+        // gameSpeed moved to top of script to ensure visibility in Unit class
+        // speedChangeFlash moved to top of script
+
         
         function gameLoop() {
             const now = performance.now();
             const frameTime = (now - lastTime) / 1000;
-            const dt = game.paused ? 0 : Math.min(frameTime, 0.1) * gameSpeed; // Apply speed multiplier to timestep
+            // Ensure gameSpeed is valid
+            const currentSpeed = (typeof gameSpeed !== 'undefined' && isFinite(gameSpeed)) ? gameSpeed : 1.0;
+            const dt = game.paused ? 0 : Math.min(frameTime, 0.1) * currentSpeed; // Apply speed multiplier to timestep
             lastTime = now;
             frameCount++;
             
             // Debug logging every 60 frames (about once per second)
             if (frameCount % 60 === 0) {
-                console.log('Game loop running - paused:', game.paused, 'speed:', gameSpeed.toFixed(2), 'dt:', dt.toFixed(4), 'units:', nations.reduce((sum, n) => sum + n.units.length, 0));
+                console.log('Game loop running - paused:', game.paused, 'speed:', currentSpeed.toFixed(2), 'dt:', dt.toFixed(4), 'units:', nations.reduce((sum, n) => sum + n.units.length, 0));
+                
+                // Log first unit details to diagnose movement issues
+                let firstUnit = null;
+                for (const nation of nations) {
+                    if (nation.units.length > 0) {
+                        firstUnit = nation.units[0];
+                        break;
+                    }
+                }
+                
+                if (firstUnit) {
+                    console.log(`Unit Debug: x=${firstUnit.x.toFixed(2)}, y=${firstUnit.y.toFixed(2)}, vx=${firstUnit.vx.toFixed(4)}, vy=${firstUnit.vy.toFixed(4)}, speedMult=${currentSpeed}, target=${firstUnit.targetNode ? 'YES' : 'NO'}, waypoint=${firstUnit.waypointNode ? 'YES' : 'NO'}, inBattle=${firstUnit.inBattle}, capitulated=${nations[firstUnit.nation].capitulated}`);
+                } else {
+                    console.log('Unit Debug: No units found');
+                }
             }
             
             // Track FPS
@@ -11336,6 +11786,10 @@
             updateSpatialGrid(allUnits);
             
             // Skip normal game logic updates during Impact event
+            if (frameCount % 60 === 0) {
+                console.log(`[IMPACT CHECK] game.impactInProgress=${game.impactInProgress}`);
+            }
+            
             if (!game.impactInProgress) {
             
             // Population cap is now enforced at spawn time (not by killing units)
@@ -11346,13 +11800,13 @@
             const totalNodes = nodes.filter(n => n.owner !== -1).length;
             nations.forEach(nation => {
                 const nodeCount = nodes.filter(n => n.owner === nation.id).length;
-                if (nodeCount >= 8) { // Reduced from 10 - resistance starts earlier
+                if (nodeCount >= 5) { // Starts even earlier to punish early snowball
                     // Initialize resistance buildup timer if not exists
                     if (!nation.resistanceBuildupTime) nation.resistanceBuildupTime = 0;
                     
-                    // Resistance builds up over 30 seconds (was 60 - much faster now!)
+                    // Resistance builds up over 15 seconds (even faster ramp)
                     nation.resistanceBuildupTime += dt;
-                    const buildupProgress = Math.min(1.0, nation.resistanceBuildupTime / 30.0);
+                    const buildupProgress = Math.min(1.0, nation.resistanceBuildupTime / 15.0);
                     
                     // Resistance scales EXPONENTIALLY with map dominance - VERY aggressive near 100%
                     // Calculate their map share (0.0 to 1.0)
@@ -11372,13 +11826,25 @@
                     
                     // Combine base with exponential dominance penalty
                     // INCREASED multiplier for more aggressive resistance
-                    // At 50% control: ~1.5x, 75%: ~5x, 90%: ~25x, 95%: ~60x, 99%: ~145x
-                    const baseResistance = overextension * 0.12 * (1 + exponentialFactor * 40); // Increased from 0.08 and 30
-                    
-                    resistanceIntensity[nation.id] = Math.min(15.0, baseResistance * buildupProgress); // Increased cap from 10 to 15
+                    // At 50% control: ~3x, 75%: ~10x, 90%: ~50x, 95%+: ~130x, 99%: ~300x
+                    const baseResistance = overextension * 0.24 * (1 + exponentialFactor * 75);
+
+                    resistanceIntensity[nation.id] = Math.min(30.0, baseResistance * buildupProgress); // Higher cap to make total control untenable
                 } else {
                     resistanceIntensity[nation.id] = 0;
                     nation.resistanceBuildupTime = 0; // Reset when no longer overextended
+                }
+            });
+
+            if (frameCount % 60 === 0) {
+                console.log(`[RESISTANCE] finished intensity calc, totalNodes=${totalNodes}`);
+            }
+            
+            // Track current node ownership to keep resistance spawns aligned to home territory
+            const nationNodeCounts = {};
+            nodes.forEach(node => {
+                if (node.owner !== -1) {
+                    nationNodeCounts[node.owner] = (nationNodeCounts[node.owner] || 0) + 1;
                 }
             });
             
@@ -11390,276 +11856,366 @@
             if (!game.lastResistanceSpawn) game.lastResistanceSpawn = 0;
             const timeSinceLastSpawn = performance.now() - game.lastResistanceSpawn;
             
-            if (Math.random() < 0.15 && timeSinceLastSpawn >= 1000) { // 15% of frames AND 1 second cooldown
-                // Find the single most overextended nation
-                let mostOverextended = null;
-                let maxResistance = 0;
-                
-                nations.forEach(nation => {
-                    const resistance = resistanceIntensity[nation.id] || 0;
-                    // Lower threshold - start defections earlier but at very low rates
-                    if (resistance > maxResistance && resistance > 0.05) { // Start at 0.05 for earlier resistance
-                        maxResistance = resistance;
-                        mostOverextended = nation;
-                    }
-                });
-                
-                // Only cause defections if there's a clear overextended target
-                if (mostOverextended && maxResistance > 0.05) {
-                    // Find UNUSED nation templates from the pool (not currently active in the field)
-                    // Only count NON-CAPITULATED nations as using their templates
-                    const usedTemplateIndices = nations
-                        .filter(n => !n.capitulated && n.templateIndex !== undefined)
-                        .map(n => n.templateIndex);
-                    const availableTemplates = [];
-                    
-                    for (let i = 0; i < nationColors.length; i++) {
-                        if (!usedTemplateIndices.includes(i)) {
-                            availableTemplates.push(i);
+            if (frameCount % 60 === 0) {
+                console.log(`[DEFECTION] entering defection check, cooldownMs=${timeSinceLastSpawn.toFixed(1)}`);
+            }
+
+            const doDefection = Math.random() < 0.35 && timeSinceLastSpawn >= 500; // Even more frequent checks and shorter cooldown
+            if (!doDefection) {
+                if (frameCount % 60 === 0) {
+                    console.log(`[DEFECTION] skipped defection roll (doDefection=${doDefection})`);
+                }
+            } else {
+                try {
+                    let mostOverextended = null;
+                    let maxResistance = 0;
+
+                    const getNationHomeNode = (nation) => {
+                        if (nation.capital) return nation.capital;
+                        return nodes.find(node => node.owner === nation.id) || null;
+                    };
+
+                    nations.forEach(nation => {
+                        const resistance = resistanceIntensity[nation.id] || 0;
+                        if (resistance > maxResistance && resistance > 0.05) {
+                            maxResistance = resistance;
+                            mostOverextended = nation;
                         }
+                    });
+
+                    if (frameCount % 60 === 0) {
+                        console.log(`[DEFECTION] candidate mostOverextended=${mostOverextended ? mostOverextended.id : 'none'} maxRes=${maxResistance.toFixed(3)}`);
                     }
-                    
-                    // If all 16 nations are active, pick from capitulated nations instead
-                    let resistancePool = availableTemplates;
-                    if (availableTemplates.length === 0) {
-                        // All templates in use - use ELIMINATED nations for resistance (not just capitulated)
-                        // EXCLUDE the nation being overextended (can't resist against yourself)
-                        const eliminatedIndices = nations
-                            .filter(n => n.eliminated && n.templateIndex !== undefined && n.id !== mostOverextended.id)
-                            .map(n => n.templateIndex);
-                        resistancePool = eliminatedIndices;
-                    }
-                    
-                    if (resistancePool.length > 0) {
-                        // TARGETED RESISTANCE - find nodes with WEAKEST imperial control
-                        // EXCLUDE capital and nodes near capital (resistance spawns at periphery, not core)
-                        const resistanceNodes = nodes.filter(n => {
-                            if (n.owner !== mostOverextended.id) return false;
-                            if (n === mostOverextended.capital) return false; // Never spawn at capital
-                            if (mostOverextended.capital) {
-                                const distToCapital = Math.hypot(n.x - mostOverextended.capital.x, n.y - mostOverextended.capital.y);
-                                if (distToCapital < 200) return false; // Don't spawn within 200 units of capital
+
+                    if (mostOverextended && maxResistance > 0.05) {
+                        const viableResistanceNations = nations.filter(n =>
+                            !n.capitulated &&
+                            n.capital &&
+                            n.id !== mostOverextended.id &&
+                            !n.eliminated
+                        );
+
+                        if (frameCount % 60 === 0) {
+                            console.log(`[DEFECTION] viableResistanceNations=${viableResistanceNations.length}`);
+                        }
+
+                        let resistancePool = [];
+                        const useExistingNations = viableResistanceNations.length > 0;
+
+                        if (!useExistingNations) {
+                            const usedTemplateIndices = nations
+                                .filter(n => n.templateIndex !== undefined)
+                                .map(n => n.templateIndex);
+                            const availableTemplates = [];
+
+                            for (let i = 0; i < nationColors.length; i++) {
+                                if (!usedTemplateIndices.includes(i)) {
+                                    availableTemplates.push(i);
+                                }
                             }
-                            return true;
-                        });
-                        
-                        if (resistanceNodes.length > 0) {
-                            // Score each node by weakness (lower control = higher score)
-                            const scoredNodes = resistanceNodes.map(node => {
-                                let weaknessScore = 0;
-                                
-                                // Distance from capital (further = MUCH weaker control)
+
+                            if (availableTemplates.length === 0) {
+                                const now = performance.now();
+                                const ELIMINATION_COOLDOWN = 120000; // 2 minutes
+                                const eliminatedIndices = nations
+                                    .filter(n => {
+                                        if (!n.eliminated || n.templateIndex === undefined || n.id === mostOverextended.id) return false;
+                                        const timeSinceElimination = n.eliminatedTime ? (now - n.eliminatedTime) : 0;
+                                        return timeSinceElimination >= ELIMINATION_COOLDOWN;
+                                    })
+                                    .map(n => n.templateIndex);
+                                resistancePool = eliminatedIndices;
+                            } else {
+                                resistancePool = availableTemplates;
+                            }
+                        }
+
+                        if (frameCount % 60 === 0) {
+                            console.log(`[DEFECTION] poolSize=${resistancePool.length} useExisting=${useExistingNations}`);
+                        }
+
+                        if (resistancePool.length > 0) {
+                            const resistanceNodes = nodes.filter(n => {
+                                if (n.owner !== mostOverextended.id) return false;
+                                if (n === mostOverextended.capital) return false;
                                 if (mostOverextended.capital) {
-                                    const distToCapital = Math.hypot(node.x - mostOverextended.capital.x, node.y - mostOverextended.capital.y);
-                                    weaknessScore += distToCapital * 0.5; // HEAVILY favor distant nodes (increased from 0.1)
+                                    const distToCapital = Math.hypot(n.x - mostOverextended.capital.x, n.y - mostOverextended.capital.y);
+                                    if (distToCapital < 200) return false;
                                 }
-                                
-                                // Count imperial units nearby (fewer = weaker)
-                                const imperialUnitsNearby = getNearbyUnits(node.x, node.y, 100)
-                                    .filter(u => u.nation === mostOverextended.id).length;
-                                weaknessScore += (10 - Math.min(imperialUnitsNearby, 10)) * 50; // Heavily favor low-unit areas
-                                
-                                // Check influence grid strength at this node
-                                const gx = Math.floor(node.x / gridSize);
-                                const gy = Math.floor(node.y / gridSize);
-                                if (gy >= 0 && gy < influenceGrid.length && gx >= 0 && gx < influenceGrid[0].length) {
-                                    const cell = influenceGrid[gy][gx];
-                                    if (cell.nation === mostOverextended.id) {
-                                        // Lower influence strength = higher weakness
-                                        weaknessScore += (1.0 - cell.strength) * 100;
-                                    }
-                                }
-                                
-                                return { node, weaknessScore, imperialUnitsNearby };
+                                return true;
                             });
-                            
-                            // Sort by weakness (highest = most vulnerable to resistance)
-                            scoredNodes.sort((a, b) => b.weaknessScore - a.weaknessScore);
-                            
-                            // Pick from top 50% weakest nodes (more targets for resistance)
-                            const weakestNodes = scoredNodes.slice(0, Math.max(1, Math.floor(scoredNodes.length * 0.5)));
-                            
-                            // SPAWN AT MULTIPLE WEAK POINTS - scale with resistance intensity (limited)
-                            const numTargets = Math.min(weakestNodes.length, Math.min(3, Math.floor(1 + maxResistance * 0.15))); // 1-3 targets max
-                            
-                            for (let targetIdx = 0; targetIdx < numTargets; targetIdx++) {
-                                const targetNodeData = weakestNodes[Math.floor(Math.random() * weakestNodes.length)];
-                                const randomNode = targetNodeData.node;
-                                const unitsAtNode = targetNodeData.imperialUnitsNearby;
-                            
-                            // Defection chance ramps smoothly with resistance
-                            // 0.1 resistance = 0.5% chance, 0.5 = 2.5%, 1.0 = 5%, 1.5 = 7.5%
-                            const baseDefectionChance = maxResistance * 0.05;
-                            
-                            if (unitsAtNode > 0) {
-                                // Units present at weak point - attempt defection
-                                const imperialUnits = mostOverextended.units.filter(u => 
-                                    Math.hypot(u.x - randomNode.x, u.y - randomNode.y) < 50
-                                );
-                                
-                                if (imperialUnits.length > 0) {
-                                    const randomUnit = imperialUnits[Math.floor(Math.random() * imperialUnits.length)];
-                                    
-                                    if (Math.random() < baseDefectionChance) {
-                                        // Pick random unused nation template for defection
-                                        const templateIndex = resistancePool[Math.floor(Math.random() * resistancePool.length)];
-                                        
-                                        // Check if this nation already exists (from previous resistance spawns)
-                                        let resistanceNation = nations.find(n => n.templateIndex === templateIndex);
-                                        
-                                        // If nation doesn't exist yet, create it
-                                        if (!resistanceNation) {
-                                            const newNationId = nations.length;
-                                            resistanceNation = {
-                                                id: newNationId,
-                                                name: nationColors[templateIndex].name,
-                                                color: nationColors[templateIndex].color,
-                                                personality: nationPersonalities[templateIndex],
-                                                voice: nationVoices[templateIndex],
-                                                templateIndex: templateIndex,
-                                                units: [],
-                                                capital: null,
-                                                capitulated: false,
-                                                strengthModifier: 1.0,
-                                                resources: 50,
-                                                income: 0,
-                                                upkeep: 0,
-                                                production: 0,
-                                                unitQueue: 0,
-                                                artilleryMagazine: 0,
-                                                queueSpawnTimer: 0,
-                                                overpopTimer: 0,
-                                                diplomaticRelations: {},
-                                                warExhaustion: 0,
-                                                totalCasualties: 0,
-                                                recentLosses: [],
-                                                recentWins: [],
-                                                lastDiplomaticEval: 0,
-                                                activeOffers: [],
-                                                tributePaying: -1,
-                                                tributeReceiving: [],
-                                                warCrimes: 0,
-                                                recentWarCrimes: [],
-                                                allianceTrust: {},
-                                                lastCapitalEval: 0,
-                                                capitalEvacuations: 0,
-                                                evacuationCooldown: 0,
-                                                superweaponProgress: 0,
-                                                superweaponCooldown: 0
-                                            };
-                                            nations.push(resistanceNation);
-                                            
-                                            // Initialize diplomatic relations for new nation
-                                            nations.forEach(n => {
-                                                if (n.id !== resistanceNation.id) {
-                                                    resistanceNation.diplomaticRelations[n.id] = undefined; // Can fight
-                                                    n.diplomaticRelations[resistanceNation.id] = undefined;
-                                                }
-                                            });
-                                        }
-                                        
-                                        // Unit defects to resistance nation
-                                        const index = mostOverextended.units.indexOf(randomUnit);
-                                        if (index > -1) {
-                                            mostOverextended.units.splice(index, 1);
-                                            randomUnit.nation = resistanceNation.id;
-                                            resistanceNation.units.push(randomUnit);
+
+                            if (frameCount % 60 === 0) {
+                                console.log(`[DEFECTION] resistanceNodes=${resistanceNodes.length}`);
+                            }
+
+                            if (resistanceNodes.length > 0) {
+                                const scoredNodes = resistanceNodes.map(node => {
+                                    let weaknessScore = 0;
+
+                                    if (mostOverextended.capital) {
+                                        const distToCapital = Math.hypot(node.x - mostOverextended.capital.x, node.y - mostOverextended.capital.y);
+                                        weaknessScore += distToCapital * 0.5;
+                                    }
+
+                                    const imperialUnitsNearby = getNearbyUnits(node.x, node.y, 100)
+                                        .filter(u => u.nation === mostOverextended.id).length;
+                                    weaknessScore += (10 - Math.min(imperialUnitsNearby, 10)) * 50;
+
+                                    const gx = Math.floor(node.x / gridSize);
+                                    const gy = Math.floor(node.y / gridSize);
+                                    if (gy >= 0 && gy < influenceGrid.length && gx >= 0 && gx < influenceGrid[0].length) {
+                                        const cell = influenceGrid[gy][gx];
+                                        if (cell.nation === mostOverextended.id) {
+                                            weaknessScore += (1.0 - cell.strength) * 100;
                                         }
                                     }
+
+                                    return { node, weaknessScore, imperialUnitsNearby };
+                                });
+
+                                scoredNodes.sort((a, b) => b.weaknessScore - a.weaknessScore);
+
+                                const weakestNodes = scoredNodes.slice(0, Math.max(1, Math.floor(scoredNodes.length * 0.5)));
+
+                                if (frameCount % 60 === 0) {
+                                    console.log(`[DEFECTION] weakestNodes=${weakestNodes.length} numTargets=${Math.min(weakestNodes.length, Math.floor(1 + maxResistance * 0.4))}`);
                                 }
-                            } else if (maxResistance > 0.3) {
-                                // NO units at weakest node - SPAWN resistance fighters!
-                                // Only spawn when resistance is significant (>0.3)
-                                // Higher resistance = more spawns, controlled growth
-                                const spawnChance = Math.max(0, (maxResistance - 0.3) * 0.4); // 0.3 = 0%, 1.0 = 28%, 3.0 = 108% (capped), 10.0 = 388% (capped)
-                                
-                                if (Math.random() < spawnChance) {
-                                    // Pick random unused nation template
-                                    const templateIndex = resistancePool[Math.floor(Math.random() * resistancePool.length)];
-                                    
-                                    // Check if this nation already exists (from previous resistance spawns)
-                                    let resistanceNation = nations.find(n => n.templateIndex === templateIndex);
-                                    
-                                    // If nation doesn't exist yet, create it
-                                    if (!resistanceNation) {
-                                        const newNationId = nations.length;
-                                        resistanceNation = {
-                                            id: newNationId,
-                                            name: nationColors[templateIndex].name,
-                                            color: nationColors[templateIndex].color,
-                                            personality: nationPersonalities[templateIndex],
-                                            voice: nationVoices[templateIndex],
-                                            templateIndex: templateIndex,
-                                            units: [],
-                                            capital: null,
-                                            capitulated: false,
-                                            strengthModifier: 1.0,
-                                            resources: 50,
-                                            income: 0,
-                                            upkeep: 0,
-                                            production: 0,
-                                            unitQueue: 0,
-                                            artilleryMagazine: 0,
-                                            queueSpawnTimer: 0,
-                                            overpopTimer: 0,
-                                            diplomaticRelations: {},
-                                            warExhaustion: 0,
-                                            totalCasualties: 0,
-                                            recentLosses: [],
-                                            recentWins: [],
-                                            lastDiplomaticEval: 0,
-                                            activeOffers: [],
-                                            tributePaying: -1,
-                                            tributeReceiving: [],
-                                            warCrimes: 0,
-                                            recentWarCrimes: [],
-                                            allianceTrust: {},
-                                            lastCapitalEval: 0,
-                                            capitalEvacuations: 0,
-                                            evacuationCooldown: 0,
-                                            superweaponProgress: 0,
-                                            superweaponCooldown: 0
-                                        };
-                                        nations.push(resistanceNation);
-                                        
-                                        // Initialize diplomatic relations for new nation
-                                        nations.forEach(n => {
-                                            if (n.id !== resistanceNation.id) {
-                                                resistanceNation.diplomaticRelations[n.id] = undefined; // Can fight
-                                                n.diplomaticRelations[resistanceNation.id] = undefined;
+
+                                const numTargets = Math.min(weakestNodes.length, Math.floor(1 + maxResistance * 0.4));
+
+                                for (let targetIdx = 0; targetIdx < numTargets; targetIdx++) {
+                                    const targetNodeData = weakestNodes[Math.floor(Math.random() * weakestNodes.length)];
+                                    const randomNode = targetNodeData.node;
+                                    const unitsAtNode = targetNodeData.imperialUnitsNearby;
+
+                                    const baseDefectionChance = Math.min(0.55, maxResistance * 0.22);
+
+                                    if (unitsAtNode > 0) {
+                                        const imperialUnits = mostOverextended.units.filter(u =>
+                                            Math.hypot(u.x - randomNode.x, u.y - randomNode.y) < 50
+                                        );
+
+                                        if (imperialUnits.length > 0 && Math.random() < baseDefectionChance) {
+                                            const randomUnit = imperialUnits[Math.floor(Math.random() * imperialUnits.length)];
+                                            let resistanceNation = null;
+
+                                            if (useExistingNations) {
+                                                const weighted = viableResistanceNations.map(n => {
+                                                    const dist = n.capital ? Math.hypot(n.capital.x - randomNode.x, n.capital.y - randomNode.y) : Infinity;
+                                                    return { nation: n, weight: 1.0 / (1.0 + dist / 500) };
+                                                });
+                                                const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+                                                let rand = Math.random() * totalWeight;
+                                                for (let w of weighted) {
+                                                    rand -= w.weight;
+                                                    if (rand <= 0) {
+                                                        resistanceNation = w.nation;
+                                                        break;
+                                                    }
+                                                }
+                                                if (!resistanceNation) resistanceNation = weighted[0].nation;
+                                            } else {
+                                                const templateIndex = resistancePool[Math.floor(Math.random() * resistancePool.length)];
+                                                resistanceNation = nations.find(n => n.templateIndex === templateIndex);
+
+                                                if (!resistanceNation) {
+                                                    const newNationId = nations.length;
+                                                    resistanceNation = {
+                                                        id: newNationId,
+                                                        name: nationColors[templateIndex].name,
+                                                        color: nationColors[templateIndex].color,
+                                                        personality: nationPersonalities[templateIndex],
+                                                        voice: nationVoices[templateIndex],
+                                                        templateIndex: templateIndex,
+                                                        units: [],
+                                                        capital: null,
+                                                        capitulated: false,
+                                                        strengthModifier: 1.0,
+                                                        resources: 50,
+                                                        income: 0,
+                                                        upkeep: 0,
+                                                        production: 0,
+                                                        unitQueue: 0,
+                                                        artilleryMagazine: 0,
+                                                        queueSpawnTimer: 0,
+                                                        overpopTimer: 0,
+                                                        diplomaticRelations: {},
+                                                        warExhaustion: 0,
+                                                        totalCasualties: 0,
+                                                        recentLosses: [],
+                                                        recentWins: [],
+                                                        lastDiplomaticEval: 0,
+                                                        activeOffers: [],
+                                                        tributePaying: -1,
+                                                        tributeReceiving: [],
+                                                        warCrimes: 0,
+                                                        recentWarCrimes: [],
+                                                        allianceTrust: {},
+                                                        lastCapitalEval: 0,
+                                                        capitalEvacuations: 0,
+                                                        evacuationCooldown: 0,
+                                                        superweaponProgress: 0,
+                                                        superweaponCooldown: 0
+                                                    };
+                                                    nations.push(resistanceNation);
+
+                                                    nations.forEach(n => {
+                                                        if (n.id !== resistanceNation.id) {
+                                                            resistanceNation.diplomaticRelations[n.id] = undefined;
+                                                            n.diplomaticRelations[resistanceNation.id] = undefined;
+                                                        }
+                                                    });
+                                                }
                                             }
-                                        });
+
+                                            if (resistanceNation) {
+                                                const index = mostOverextended.units.indexOf(randomUnit);
+                                                if (index > -1) {
+                                                    mostOverextended.units.splice(index, 1);
+                                                    randomUnit.nation = resistanceNation.id;
+                                                    const hasHomeNodes = (nationNodeCounts[resistanceNation.id] || 0) > 0;
+                                                    const homeNode = hasHomeNodes ? getNationHomeNode(resistanceNation) : null;
+                                                    if (homeNode) {
+                                                        randomUnit.x = homeNode.x;
+                                                        randomUnit.y = homeNode.y;
+                                                        randomUnit.targetNode = homeNode;
+                                                        randomUnit.role = 'garrison';
+                                                    }
+                                                    resistanceNation.units.push(randomUnit);
+                                                }
+                                            }
+                                        }
+                                    } else if (maxResistance > 0.2) {
+                                        const spawnChance = Math.min(1.0, Math.max(0, (maxResistance - 0.2) * 1.5));
+
+                                        if (Math.random() < spawnChance) {
+                                            let resistanceNation = null;
+
+                                            if (useExistingNations) {
+                                                const weighted = viableResistanceNations.map(n => {
+                                                    const dist = n.capital ? Math.hypot(n.capital.x - randomNode.x, n.capital.y - randomNode.y) : Infinity;
+                                                    return { nation: n, weight: 1.0 / (1.0 + dist / 500) };
+                                                });
+                                                const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+                                                let rand = Math.random() * totalWeight;
+                                                for (let w of weighted) {
+                                                    rand -= w.weight;
+                                                    if (rand <= 0) {
+                                                        resistanceNation = w.nation;
+                                                        break;
+                                                    }
+                                                }
+                                                if (!resistanceNation) resistanceNation = weighted[0].nation;
+                                            } else {
+                                                const templateIndex = resistancePool[Math.floor(Math.random() * resistancePool.length)];
+                                                resistanceNation = nations.find(n => n.templateIndex === templateIndex);
+
+                                                if (!resistanceNation) {
+                                                    const newNationId = nations.length;
+                                                    resistanceNation = {
+                                                        id: newNationId,
+                                                        name: nationColors[templateIndex].name,
+                                                        color: nationColors[templateIndex].color,
+                                                        personality: nationPersonalities[templateIndex],
+                                                        voice: nationVoices[templateIndex],
+                                                        templateIndex: templateIndex,
+                                                        units: [],
+                                                        capital: null,
+                                                        capitulated: false,
+                                                        strengthModifier: 1.0,
+                                                        resources: 50,
+                                                        income: 0,
+                                                        upkeep: 0,
+                                                        production: 0,
+                                                        unitQueue: 0,
+                                                        artilleryMagazine: 0,
+                                                        queueSpawnTimer: 0,
+                                                        overpopTimer: 0,
+                                                        diplomaticRelations: {},
+                                                        warExhaustion: 0,
+                                                        totalCasualties: 0,
+                                                        recentLosses: [],
+                                                        recentWins: [],
+                                                        lastDiplomaticEval: 0,
+                                                        activeOffers: [],
+                                                        tributePaying: -1,
+                                                        tributeReceiving: [],
+                                                        warCrimes: 0,
+                                                        recentWarCrimes: [],
+                                                        allianceTrust: {},
+                                                        lastCapitalEval: 0,
+                                                        capitalEvacuations: 0,
+                                                        evacuationCooldown: 0,
+                                                        superweaponProgress: 0,
+                                                        superweaponCooldown: 0
+                                                    };
+                                                    nations.push(resistanceNation);
+
+                                                    nations.forEach(n => {
+                                                        if (n.id !== resistanceNation.id) {
+                                                            resistanceNation.diplomaticRelations[n.id] = undefined;
+                                                            n.diplomaticRelations[resistanceNation.id] = undefined;
+                                                        }
+                                                    });
+                                                }
+                                            }
+
+                                            if (resistanceNation) {
+                                                const hasHomeNodes = (nationNodeCounts[resistanceNation.id] || 0) > 0;
+                                                const spawnAnchor = hasHomeNodes ? (getNationHomeNode(resistanceNation) || randomNode) : randomNode;
+
+                                                const angle = Math.random() * Math.PI * 2;
+                                                const dist = 20 + Math.random() * 10;
+                                                const spawnX = spawnAnchor.x + Math.cos(angle) * dist;
+                                                const spawnY = spawnAnchor.y + Math.sin(angle) * dist;
+
+                                                const resistanceFighter = new Unit(spawnX, spawnY, resistanceNation.id);
+                                                resistanceFighter.health = 150;
+                                                resistanceFighter.strength = 1.5;
+                                                resistanceFighter.veterancy = 50;
+                                                resistanceFighter.morale = 1.0;
+                                                resistanceFighter.damageBonus = 0.3;
+                                                resistanceFighter.defenseBonus = 0.2;
+                                                resistanceFighter.jitterCooldown = 10.0;
+                                                resistanceFighter.capitalMissileCooldown = 10.0;
+                                                resistanceFighter.jitterPositions = [];
+                                                resistanceFighter.role = 'garrison';
+                                                resistanceFighter.targetNode = spawnAnchor;
+                                                resistanceFighter.targetCommitmentTime = 20.0;
+                                                resistanceNation.units.push(resistanceFighter);
+
+                                                game.lastResistanceSpawn = performance.now();
+
+                                                console.log(`Resistance fighter spawned for ${resistanceNation.name} at ${hasHomeNodes ? 'their own node' : 'weak node'} (resistance: ${maxResistance.toFixed(2)}, weakness: ${targetNodeData.weaknessScore.toFixed(1)})`);
+                                            }
+                                        }
                                     }
-                                    
-                                    // Spawn resistance fighter at weakest point
-                                    const angle = Math.random() * Math.PI * 2;
-                                    const dist = 20 + Math.random() * 10;
-                                    const spawnX = randomNode.x + Math.cos(angle) * dist;
-                                    const spawnY = randomNode.y + Math.sin(angle) * dist;
-                                    
-                                    const resistanceFighter = new Unit(spawnX, spawnY, resistanceNation.id);
-                                    resistanceFighter.jitterCooldown = 10.0;
-                                    resistanceFighter.capitalMissileCooldown = 10.0;
-                                    resistanceFighter.jitterPositions = [];
-                                    // Keep resistance fighters near spawn - garrison role, target nearby node
-                                    resistanceFighter.role = 'garrison';
-                                    resistanceFighter.targetNode = randomNode;
-                                    resistanceFighter.targetCommitmentTime = 20.0; // Stay committed to this node for 20 seconds
-                                    resistanceNation.units.push(resistanceFighter);
-                                    
-                                    // Update spawn cooldown timestamp
-                                    game.lastResistanceSpawn = performance.now();
-                                    
-                                    console.log(`Resistance fighter spawned for ${resistanceNation.name} at weak node (resistance: ${maxResistance.toFixed(2)}, weakness: ${targetNodeData.weaknessScore.toFixed(1)})`);
                                 }
                             }
-                            } // End of multi-target loop
+                        }
+                    } else {
+                        if (frameCount % 60 === 0) {
+                            console.log(`[DEFECTION] no overextended nation eligible (maxRes=${maxResistance.toFixed(3)})`);
                         }
                     }
+                } catch (e) {
+                    console.log(`[DEFECTION ERROR] ${e && e.stack ? e.stack : e}`);
                 }
             }
+
+            if (frameCount % 60 === 0) {
+                console.log(`[DEFECTION] defection block complete`);
+            }
             
+            if (frameCount % 60 === 0) {
+                console.log(`[POST DEFECTION] exited defection block`);
+            }
+
             // Update nodes and handle death/respawning
+            if (frameCount % 60 === 0) {
+                console.log(`[NODE UPDATE] Starting node update loop, nodes.length=${nodes.length}`);
+            }
             for (let i = nodes.length - 1; i >= 0; i--) {
                 const shouldRemove = nodes[i].update(dt, nations, resistanceIntensity) === false;
                 if (shouldRemove) {
@@ -11695,6 +12251,10 @@
                     }
                     nodes.splice(i, 1);
                 }
+            }
+
+            if (frameCount % 60 === 0) {
+                console.log(`[NODE UPDATE] Finished node update loop, nodes.length=${nodes.length}`);
             }
             
             // Remove nodes marked for destruction by superweapons
@@ -11778,6 +12338,9 @@
             
             // CAPITAL RELOCATION - nations annually evaluate and move capital to optimal location
             // Strategic placement balances economic value with safety from threats
+            if (frameCount % 60 === 0) {
+                console.log(`[CAPITAL RELOCATION] Starting capital relocation loop`);
+            }
             nations.forEach(nation => {
                 if (nation.capitulated || !nation.capital) return;
                 
@@ -12007,6 +12570,9 @@
             
             // SUPERWEAPON DEVELOPMENT - nations build experimental weapons
             // Goal: 3 superweapons (1 deployed, 1 standby, 1 in repair)
+            if (frameCount % 60 === 0) {
+                console.log(`[SUPERWEAPON DEV] Starting superweapon development loop`);
+            }
             nations.forEach(nation => {
                 if (nation.capitulated) return;
                 
@@ -13221,7 +13787,10 @@
                 // Final elimination - capitulated with no units left
                 if (nation.capitulated && nation.units.length === 0) {
                     // Nation is completely eliminated - no resurrection possible
-                    nation.eliminated = true;
+                    if (!nation.eliminated) {
+                        nation.eliminated = true;
+                        nation.eliminatedTime = performance.now(); // Track when eliminated
+                    }
                 }
             });
             
@@ -13285,10 +13854,10 @@
                     // At 90% dominance: 1.2% per second (~1.5 minutes average)
                     // At 95% dominance: 1.7% per second (~1 minute average)
                     
-                    let resurrectionChance = 0.002; // 0.2% base (reduced from 0.5%)
-                    if (maxNodePercent > 0.8) {
-                        const dominanceBonus = (maxNodePercent - 0.8) * 20; // 0.5% per 5% over 80%
-                        resurrectionChance += dominanceBonus * 0.005;
+                    let resurrectionChance = 0.006; // Higher base chance to reintroduce eliminated nations
+                    if (maxNodePercent > 0.65) {
+                        const dominanceBonus = (maxNodePercent - 0.65) * 30; // Faster escalation once any empire nears 2/3 control
+                        resurrectionChance += dominanceBonus * 0.01;
                     }
                     
                     // Roll for resurrection (only for longest-dead eligible nation)
@@ -13398,6 +13967,10 @@
             }
             
             // Economic system update
+            if (frameCount % 60 === 0) {
+                console.log(`[START ECONOMIC] Beginning economic system update`);
+            }
+            
             nations.forEach(nation => {
                 if (nation.capitulated) return;
                 
@@ -13563,10 +14136,12 @@
                 
                 // Calculate upkeep costs - scales with unit experience/veterancy
                 // More experienced units cost more to maintain (1.0x to 2.0x based on veterancy)
+                // RESISTANCE pays minimal upkeep (guerrilla efficiency)
+                const baseUpkeepCost = nation.capitulated ? UNIT_UPKEEP_RESISTANCE : UNIT_UPKEEP;
                 let totalUpkeep = 0;
                 nation.units.forEach(unit => {
                     const veterancyMultiplier = 1.0 + (unit.veterancy / 100) * 1.0; // 1.0x at 0 vet, 2.0x at 100 vet
-                    totalUpkeep += UNIT_UPKEEP * veterancyMultiplier;
+                    totalUpkeep += baseUpkeepCost * veterancyMultiplier;
                 });
                 
                 // Reduce upkeep for newly resurrected nations (economic recovery period)
@@ -13703,6 +14278,11 @@
             });
             
             // Update
+            if (frameCount % 60 === 0) {
+                console.log(`[AFTER ECONOMIC UPDATE] About to start nation unit updates`);
+                console.log(`[BEFORE NATIONS LOOP] About to iterate ${nations.length} nations`);
+            }
+            
             nations.forEach(nation => {
                 // CACHE NODE LISTS - calculate once per nation instead of per unit
                 // This is a massive performance gain when there are many units
@@ -13779,7 +14359,19 @@
                     }
                 }
                 */
-                nation.units.forEach(unit => unit.update(dt, allUnits, nodes));
+                
+                // DEBUG: Verify forEach is executing
+                if (frameCount % 60 === 0 && nation.units.length > 0) {
+                    const unit = nation.units[0];
+                    console.log(`[FOREACH] nation=${nation.id} units=${nation.units.length} typeof update=${typeof unit.update}`);
+                }
+                
+                nation.units.forEach(unit => {
+                    if (frameCount % 60 === 0 && Math.random() < 0.05) {
+                        console.log(`[FOREACH LOOP] Calling update on unit from nation ${unit.nation}`);
+                    }
+                    unit.update(dt, allUnits, nodes);
+                });
                 
                 // Alliance pressure checking DISABLED for performance
                 // This was O(n²) operation scanning all unit pairs
@@ -14400,22 +14992,6 @@
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // Show "Click to Start" message if paused
-            if (game.paused) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                
-                ctx.fillStyle = '#00ff88';
-                ctx.font = 'bold 48px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText('CLICK TO START', canvas.width / 2, canvas.height / 2);
-                
-                ctx.font = '24px monospace';
-                ctx.fillStyle = '#00ddff';
-                ctx.fillText('Autonomous Frontier Combatant Units', canvas.width / 2, canvas.height / 2 + 60);
-                ctx.textAlign = 'left';
-            }
-            
             // Scale world down to fit in window
             ctx.save();
             ctx.scale(1 / WORLD_SCALE, 1 / WORLD_SCALE);
@@ -14906,6 +15482,23 @@
                 ctx.textAlign = 'left';
             }
             
+            // Draw paused overlay ON TOP of everything if game is paused
+            // This appears after all world rendering, so it's always visible
+            if (game.paused) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#00ff88';
+                ctx.font = 'bold 48px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText('CLICK TO START', canvas.width / 2, canvas.height / 2);
+                
+                ctx.font = '24px monospace';
+                ctx.fillStyle = '#00ddff';
+                ctx.fillText('Autonomous Frontier Combatant Units', canvas.width / 2, canvas.height / 2 + 60);
+                ctx.textAlign = 'left';
+            }
+            
             // Minimal FPS display with game speed
             const flashIntensity = Math.max(0, speedChangeFlash);
             const speedColor = flashIntensity > 0 ? `rgba(255, 255, 0, ${0.3 + flashIntensity * 0.7})` : 'rgba(0, 0, 0, 0.5)';
@@ -14920,7 +15513,7 @@
             ctx.textAlign = 'left';
             
             requestAnimationFrame(gameLoop);
-        }
+        } // End of gameLoop function
         
         // Initialize and start
         setTimeout(() => {
@@ -14932,6 +15525,19 @@
             initAudioContext();
             console.log('✓ Frontier simulation online');
         }, 1500);
+        
+        // Bind download button
+        const downloadBtn = document.getElementById('downloadLogBtn');
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', downloadLogs);
+        }
+        
+        // Keyboard shortcut for download (L key)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'l' || e.key === 'L') {
+                downloadLogs();
+            }
+        });
         
         gameLoop();
     </script>
