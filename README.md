@@ -4,7 +4,7 @@ An advanced real-time strategic territory simulation featuring AI nations, diplo
 
 ## 🎮 Play Now
 
-**[Launch Frontier](index.html)** 
+**[Launch Frontier](https://bward-shp.github.io/frontier/)** 
 
 ## Features
 
