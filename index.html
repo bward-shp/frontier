@@ -12133,7 +12133,7 @@
             const totalNodes = nodes.filter(n => n.owner !== -1).length;
             nations.forEach(nation => {
                 const nodeCount = nodes.filter(n => n.owner === nation.id).length;
-                if (nodeCount >= 5) { // Starts even earlier to punish early snowball
+                if (nodeCount >= 3) { // Lower threshold - resistance starts at 3+ nodes instead of 5
                     // Initialize resistance buildup timer if not exists
                     if (!nation.resistanceBuildupTime) nation.resistanceBuildupTime = 0;
                     
@@ -12155,12 +12155,12 @@
                     const exponentialFactor = (Math.exp(5 * proximityToTotal) - 1) / (Math.exp(5) - 1);
                     
                     // Base resistance from node count
-                    const overextension = Math.max(0, nodeCount - 8); // Adjusted for new threshold
+                    const overextension = Math.max(0, nodeCount - 3); // Start counting overextension at 3 nodes
                     
                     // Combine base with exponential dominance penalty
                     // INCREASED multiplier for more aggressive resistance
                     // At 50% control: ~3x, 75%: ~10x, 90%: ~50x, 95%+: ~130x, 99%: ~300x
-                    const baseResistance = overextension * 0.24 * (1 + exponentialFactor * 75);
+                    const baseResistance = overextension * 0.5 * (1 + exponentialFactor * 75); // Increased from 0.24 to 0.5
 
                     resistanceIntensity[nation.id] = Math.min(30.0, baseResistance * buildupProgress); // Higher cap to make total control untenable
                 } else {
