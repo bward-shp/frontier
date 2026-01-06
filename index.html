@@ -1831,6 +1831,37 @@
                             const wasCapital = this.isCapital;
                             const previousOwner = this.owner;
                             
+                            // CAPITAL SELF-DESTRUCT ON CAPTURE - capitals detonate when they fall
+                            if (wasCapital && previousOwner >= 0) {
+                                const nation = nations[previousOwner];
+                                if (nation && !nation.capitulated) {
+                                    // TRIGGER IMMEDIATE DETONATION
+                                    const blastRadius = 120;
+                                    detonationEffects.push({
+                                        x: this.x,
+                                        y: this.y,
+                                        radius: blastRadius,
+                                        maxRadius: blastRadius,
+                                        duration: 1.5,
+                                        timer: 0,
+                                        maxAge: 0.5,
+                                        age: 0,
+                                        damage: 300
+                                    });
+                                    
+                                    // Create crater
+                                    craters.push({
+                                        x: this.x,
+                                        y: this.y,
+                                        radius: blastRadius,
+                                        age: 0
+                                    });
+                                    
+                                    Audio.announce(`${nation.name} capital detonates on capture!`, 'critical', previousOwner);
+                                    console.log(`💥 CAPITAL SELF-DESTRUCT: ${nation.name} capital explodes at ${this.x}, ${this.y}`);
+                                }
+                            }
+                            
                             // Check if capturing nation prevented self-destruct
                             const preventedDetonation = this.isCapital && this.selfDestructTimer && this.selfDestructTimer > 0.5;
                             if (preventedDetonation) {
@@ -11801,8 +11832,59 @@
                     
                     // Phase 3: Rebirth (5+ seconds)
                     if (game.impactTimer >= 5.0) {
-                        // RESET THE WORLD
-                        console.log('🌍 WORLD RESET - Starting anew');
+                        // DETONATION PHASE - nodes explode with varying chances
+                        console.log('🌍 WORLD RESET - Detonating nodes');
+                        
+                        let capitalDetonations = 0;
+                        nodes.forEach(node => {
+                            let shouldDetonate = false;
+                            
+                            // Capitals ALWAYS detonate (100% - no random check)
+                            if (node.isCapital) {
+                                shouldDetonate = true;
+                            }
+                            // Special nodes (cryptic names with buffs) get 60% chance
+                            else if (node.crypticName) {
+                                shouldDetonate = Math.random() < 0.6;
+                            }
+                            // Regular nodes get 25% chance
+                            else {
+                                shouldDetonate = Math.random() < 0.25;
+                            }
+                            
+                            if (shouldDetonate) {
+                                // Create detonation effect
+                                const blastRadius = node.isCapital ? 120 : (node.crypticName ? 100 : 80);
+                                detonationEffects.push({
+                                    x: node.x,
+                                    y: node.y,
+                                    radius: blastRadius,
+                                    maxRadius: blastRadius,
+                                    duration: 1.5,
+                                    timer: 0,
+                                    maxAge: 0.5,
+                                    age: 0,
+                                    damage: node.isCapital ? 300 : (node.crypticName ? 200 : 100)
+                                });
+                                
+                                // Create crater
+                                craters.push({
+                                    x: node.x,
+                                    y: node.y,
+                                    radius: blastRadius,
+                                    age: 0
+                                });
+                                
+                                // Announce detonation
+                                const nodeType = node.isCapital ? 'capital' : (node.crypticName ? 'arcane center' : 'settlement');
+                                const ownerName = node.owner >= 0 && node.owner < nations.length ? nations[node.owner].name : 'neutral';
+                                console.log(`💥 ${nodeType} detonates at ${ownerName} position`);
+                                
+                                if (node.isCapital) capitalDetonations++;
+                            }
+                        });
+                        
+                        console.log(`🌍 WORLD RESET - ${capitalDetonations} capitals detonated - Starting anew`);
                         
                         // Clear all game state
                         nodes.length = 0;
