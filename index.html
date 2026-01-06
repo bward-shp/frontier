@@ -3737,10 +3737,11 @@
                             
                             // Spawn nested items
                             if (this.targetFacility.type === 'lab' && !this.targetFacility.hasSpawnedContents) {
-                                const data = new SpecialArtifact(this.targetFacility.x, this.targetFacility.y, 'data');
-                                artifacts.push(data);
+                                const safe = new SpecialArtifact(this.targetFacility.x, this.targetFacility.y, 'safe');
+                                safe.containerArtifact = this.targetFacility;
+                                artifacts.push(safe);
                                 this.targetFacility.hasSpawnedContents = true;
-                                Audio.announce(`${nation.name} finds Research Data inside`, 'high', this.capturedBy);
+                                Audio.announce(`${nation.name} finds a Secure Safe inside`, 'high', this.capturedBy);
                             } else if (this.targetFacility.type === 'safe' && !this.targetFacility.hasSpawnedContents) {
                                 // ONLY ONE SPEAR - check if it already exists
                                 const existingSpear = artifacts.find(a => a.type === 'spear');
@@ -4013,10 +4014,11 @@
                                     
                                     // Spawn nested contents if not already spawned
                                     if (this.type === 'lab' && !this.hasSpawnedContents) {
-                                        const data = new SpecialArtifact(this.x, this.y, 'data');
-                                        artifacts.push(data);
+                                        const safe = new SpecialArtifact(this.x, this.y, 'safe');
+                                        safe.containerArtifact = this;
+                                        artifacts.push(safe);
                                         this.hasSpawnedContents = true;
-                                        Audio.announce(`${enemyCapturing.name} finds Research Data inside`, 'high', enemyCapturing.id);
+                                        Audio.announce(`${enemyCapturing.name} finds a Secure Safe inside`, 'high', enemyCapturing.id);
                                     } else if (this.type === 'safe' && !this.hasSpawnedContents) {
                                         // ONLY ONE SPEAR - check if it already exists
                                         const existingSpear = artifacts.find(a => a.type === 'spear');
@@ -4047,8 +4049,40 @@
                         this.captureProgress = Math.max(0, this.captureProgress - dt * 30);
                     }
                     
+                    // === MOVABLE ARTIFACT UNLOCK: For artifacts like Safe with keys nearby ===
+                    if (this.movable && !this.isUnlocked && this.requires && !this.hasSpawnedContents) {
+                        // Check if the required key is NEAR this artifact (within 150 units)
+                        const keyNearby = artifacts.find(a => 
+                            a.type === this.requires && 
+                            a.capturedBy === this.capturedBy &&
+                            Math.hypot(a.x - this.x, a.y - this.y) < 150
+                        );
+                        
+                        if (keyNearby) {
+                            // Key is near - unlock this artifact and spawn contents
+                            this.isUnlocked = true;
+                            
+                            const nation = nations[this.capturedBy];
+                            if (nation) {
+                                if (this.type === 'safe') {
+                                    // Safe opened - spawn Spear of Longitude
+                                    const existingSpear = artifacts.find(a => a.type === 'spear');
+                                    if (!existingSpear) {
+                                        const spear = new SpecialArtifact(this.x, this.y, 'spear');
+                                        spear.containerArtifact = this;
+                                        spear.hasSpawned = true; // Make it capturable immediately
+                                        artifacts.push(spear);
+                                        console.log(`SPEAR SPAWNED from Safe unlock at (${this.x}, ${this.y})`);
+                                        Audio.announce(`${nation.name} finds Spear of Longitude inside!`, 'high', this.capturedBy);
+                                    }
+                                    this.hasSpawnedContents = true;
+                                }
+                            }
+                        }
+                    }
+                    
                     // === RE-LOCKING: If unlocked facility loses its key, enter locked security state ===
-                    if (this.isUnlocked && this.requires && !this.isSecureLocked) {
+                    if (this.isUnlocked && this.requires && !this.isSecureLocked && !this.movable) {
                         // Check if we still have the required key
                         const keyOwned = artifacts.find(a => 
                             a.type === this.requires && 
@@ -6143,28 +6177,27 @@
             // They need advantage to reestablish against dominant empires
             const resistanceBonus = nation.capitulated ? 1.5 : 1.0; // 50% stronger comeback for resistance
             
-            // Reduced comeback mechanics - weaker inverse relationship
-            // With half the map (~22 nodes): optimal = 110 units
-            // At optimal: 1.0x strength (100%)
-            // At 2x optimal: 0.5x strength (50%)
-            // At 0.5x optimal: 1.3x strength (130%) - reduced from 2.0x
+            // STRONG ANTI-SNOWBALL: Prevent any nation from achieving overwhelming force
+            // Keep multiple competitors viable (big nation, rival, disruptor, etc.)
             const ratio = unitCount / OPTIMAL_UNIT_COUNT;
             
             if (ratio <= 1.0) {
-                // Fewer units = slightly stronger (capped at 1.3x instead of unlimited)
-                const boost = 1.0 / ratio; // e.g., 50 units = 2.0x
-                return Math.min(1.3 * resistanceBonus, boost * resistanceBonus); // Cap scales with resistance bonus
+                // Fewer units = stronger (capped at 1.5x for underdogs)
+                const boost = 1.0 / ratio;
+                return Math.min(1.5 * resistanceBonus, boost * resistanceBonus);
             } else {
-                // More units = weaker (inversely proportional)
-                // Additional penalty based on how long they've been overpopulated
-                const baseModifier = 1.0 / ratio; // e.g., 200 units = 100/200 = 0.5x
+                // More units = MUCH weaker (exponential penalty for snowballing)
+                // 1.5x optimal: 0.6x strength
+                // 2.0x optimal: 0.4x strength
+                // 3.0x optimal: 0.2x strength
+                const excessRatio = ratio - 1.0; // How much over optimal
+                const basePenalty = 1.0 / (1.0 + excessRatio * 1.5); // Steeper curve
                 
-                // Time-based decay: after 60 seconds of overpopulation, approaches 0%
-                // overpopTimer is in seconds
-                const timePenalty = Math.min(nation.overpopTimer / 60, 1.0); // 0 to 1 over 60 seconds
+                // Additional time-based decay for prolonged dominance
+                const timePenalty = Math.min((nation.overpopTimer || 0) / 60, 1.0); // 0 to 1 over 60 seconds
                 
-                // Gradually reduce from base modifier toward 0% based on time
-                return baseModifier * (1.0 - timePenalty * 0.95) * resistanceBonus; // Can reach as low as 5% of base
+                // Compound penalties: base * time decay * resistance
+                return basePenalty * (1.0 - timePenalty * 0.7) * resistanceBonus; // Can reach very low
             }
         }
         
@@ -11369,9 +11402,10 @@
         
         // Spawn special artifacts on the map
         // NOTE: spear is a nested item - spawns when Safe is unlocked
+        // NOTE: safe is a nested item - spawns when Lab is unlocked
         // GUARANTEED SPAWNS - ensure critical items appear exactly once
         const guaranteedArtifacts = [
-            'lab', 'lab_key', 'safe', 'safe_key', 
+            'lab', 'lab_key', 'safe_key', // Safe spawns inside lab, not on map
             'reactor', 'access_card', 'prototype', 'auth_code',
             'keycode', 'weapon', 'plans', 'data'
         ];
