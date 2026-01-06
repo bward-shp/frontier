@@ -1831,10 +1831,13 @@
                             const wasCapital = this.isCapital;
                             const previousOwner = this.owner;
                             
-                            // CAPITAL SELF-DESTRUCT ON CAPTURE - capitals detonate when they fall
+                            // CAPITAL SELF-DESTRUCT ON CAPTURE - but ONLY if it's the last node
                             if (wasCapital && previousOwner >= 0) {
                                 const nation = nations[previousOwner];
-                                if (nation && !nation.capitulated) {
+                                const remainingNodes = nodes.filter(n => n.owner === previousOwner && n !== this);
+                                
+                                // Only detonate if this is the LAST node (no remaining nodes)
+                                if (nation && !nation.capitulated && remainingNodes.length === 0) {
                                     // TRIGGER IMMEDIATE DETONATION
                                     const blastRadius = 120;
                                     detonationEffects.push({
@@ -1857,8 +1860,8 @@
                                         age: 0
                                     });
                                     
-                                    Audio.announce(`${nation.name} capital detonates on capture!`, 'critical', previousOwner);
-                                    console.log(`💥 CAPITAL SELF-DESTRUCT: ${nation.name} capital explodes at ${this.x}, ${this.y}`);
+                                    Audio.announce(`${nation.name} final stronghold detonates!`, 'critical', previousOwner);
+                                    console.log(`💥 FINAL CAPITAL SELF-DESTRUCT: ${nation.name} last capital explodes at ${this.x}, ${this.y}`);
                                 }
                             }
                             
