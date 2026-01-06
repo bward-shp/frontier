@@ -11393,6 +11393,8 @@
             destructionThreshold: 25, // Number of craters to trigger impact
             impactInProgress: false, // Currently executing impact sequence
             impactTimer: 0, // Timer for impact animation
+            impactWarningLevel: 0, // Destruction level when warning issued
+            divineDestructionCount: 0, // Destruction from divine node wipes (no craters)
             crossSpires: [], // Monuments to the fallen
             activeVote: null // Tracks nation superweapon vote meter for UI
         };
@@ -11402,6 +11404,48 @@
         // Format: timestamp, event type, data
         const aiDebugLog = [];
         const MAX_LOG_ENTRIES = 1000; // Keep last 1000 events
+
+        // ===== CATASTROPHE (CATACLYSM) HELPERS =====
+        function issueCataclysmWarning(destructionLevel, percent) {
+            game.impactWarningGiven = true;
+            game.impactWarningLevel = destructionLevel;
+            console.log(`⚠️ Cataclysm WARNING triggered at ${destructionLevel}/${game.destructionThreshold} (${percent.toFixed(1)}%)`);
+            Audio.announce(`⚠️ WARNING: Interference overload at critical levels. Cataclysm imminent.`, 'critical');
+            for (let i = 0; i < 2; i++) setTimeout(() => Audio.playAlertTone(), i * 600);
+        }
+
+        function triggerCataclysm(destructionLevel) {
+            game.impactInProgress = true;
+            game.impactTimer = 0;
+            game.impactCount++;
+            game.impactWarningGiven = false;
+            game.impactWarningLevel = 0;
+            game.divineDestructionCount = 0; // Reset divine contribution for the next cycle
+            console.log(`🌍 CATACLYSM ${game.impactCount} TRIGGERED - Destruction level: ${destructionLevel}`);
+            logGameEvent('cataclysm', `Cataclysm ${game.impactCount} triggered`, { craters: destructionLevel, priority: 'critical' });
+            Audio.announce(`Cataclysm detected. All life ceases. You start anew.`, 'critical');
+            Audio.playImpactEvent();
+        }
+
+        function evaluateCataclysm(destructionLevel) {
+            if (game.impactInProgress) return;
+            const percent = (destructionLevel / game.destructionThreshold) * 100;
+
+            // If warned and another destructive act occurs, trigger immediately
+            if (game.impactWarningGiven && destructionLevel > (game.impactWarningLevel || 0)) {
+                triggerCataclysm(destructionLevel);
+                return;
+            }
+
+            if (destructionLevel >= game.destructionThreshold) {
+                triggerCataclysm(destructionLevel);
+                return;
+            }
+
+            if (percent >= 80 && percent < 100 && !game.impactWarningGiven) {
+                issueCataclysmWarning(destructionLevel, percent);
+            }
+        }
         
         function logAIEvent(category, message, data = {}) {
             const timestamp = performance.now();
@@ -11513,22 +11557,22 @@
                 Audio.announce('Divine intervention: superweapon stunned', 'high');
             } else if (hitType === 'node') {
                 // DESTROY node
-                if (hitTarget.owner >= 0) {
-                    const owner = nations[hitTarget.owner];
-                    Audio.announce(`Divine wrath destroys ${owner.name} node`, 'high');
-                }
-                // Distribute units that were at this node
-                hitTarget.units = 0; // Clear garrison
-                // Remove node from map
+                const blastRadius = 100;
+                const nodeX = hitTarget.x;
+                const nodeY = hitTarget.y;
+                
+                // Clear garrison and remove node
+                hitTarget.units = 0;
                 const idx = nodes.indexOf(hitTarget);
                 if (idx >= 0) nodes.splice(idx, 1);
+                
                 // Play explosion sound
-                Audio.playSelfDestruct(hitTarget.x, hitTarget.y);
-                const blastRadius = 100;
+                Audio.playSelfDestruct(nodeX, nodeY);
+                
                 // Damage all units in blast radius
                 nations.forEach(nation => {
                     nation.units.forEach(unit => {
-                        const dist = Math.hypot(unit.x - hitTarget.x, unit.y - hitTarget.y);
+                        const dist = Math.hypot(unit.x - nodeX, unit.y - nodeY);
                         if (dist < blastRadius) {
                             const dmg = 200 * (1 - dist / blastRadius); // Max 200 at center, 0 at edge
                             unit.health = Math.max(0, unit.health - dmg);
@@ -11536,8 +11580,8 @@
                     });
                 });
                 detonationEffects.push({
-                    x: hitTarget.x,
-                    y: hitTarget.y,
+                    x: nodeX,
+                    y: nodeY,
                     radius: blastRadius,
                     maxRadius: blastRadius,
                     duration: 1.5,
@@ -11546,6 +11590,11 @@
                     age: 0,
                     damage: 200
                 });
+
+                // Divine destruction contributes to cataclysm criticality without blocking terrain
+                game.divineDestructionCount = (game.divineDestructionCount || 0) + 1;
+                const totalDestruction = craters.length + game.divineDestructionCount;
+                evaluateCataclysm(totalDestruction);
             } else {
                 // CLICK EMPTY SPACE: small divine detonation
                 Audio.playMissileImpact(clickX, clickY);
@@ -11644,32 +11693,20 @@
                 if (game.lastImpactCheck >= game.impactCheckInterval && !game.impactInProgress) {
                     game.lastImpactCheck = 0;
                     
-                    // Count total destruction markers (craters from nuclear detonations)
-                    const destructionLevel = craters.length;
+                    // Count total destruction markers: craters (natural/superweapon) + divine destruction count
+                    const destructionLevel = craters.length + (game.divineDestructionCount || 0);
+                    const destructionPercent = (destructionLevel / game.destructionThreshold) * 100;
+                    console.log(`🔍 Cataclysm Check: ${destructionLevel}/${game.destructionThreshold} total (${destructionPercent.toFixed(1)}%)`);
                     
-                    if (destructionLevel >= game.destructionThreshold) {
-                        // TRIGGER IMPACT EVENT
-                        game.impactInProgress = true;
-                        game.impactTimer = 0;
-                        game.impactCount++;
-                        
-                        console.log(`🌍 IMPACT EVENT ${game.impactCount} TRIGGERED - Destruction level: ${destructionLevel}`);
-                        logGameEvent('impact', `Impact ${game.impactCount} triggered`, { craters: destructionLevel, priority: 'critical' });
-                        
-                        // ANNOUNCER: Impact warning
-                        Audio.announce(`Impact event detected. All life ceases. You start anew.`, 'critical');
-                        
-                        // Visual/audio effect at impact
-                        Audio.playImpactEvent();
-                    }
+                    evaluateCataclysm(destructionLevel);
                 }
                 
-                // Execute impact sequence (pauses normal game logic)
+                // Execute cataclysm sequence (pauses normal game logic)
                 if (game.impactInProgress) {
                     game.impactTimer += dt;
                     
-                    // Pause all normal game updates during impact
-                    // Only impact sequence runs
+                    // Pause all normal game updates during cataclysm
+                    // Only cataclysm sequence runs
                     
                     // Phase 1: Conversion (0-3 seconds) - convert all units to cross spires
                     if (game.impactTimer < 3.0) {
@@ -11697,7 +11734,7 @@
                                     game.impactSurvivors.push(...survivors);
                                 }
                             });
-                            console.log(`🌍 IMPACT: Saved ${game.impactSurvivors.length} survivors`);
+                            console.log(`🌍 CATACLYSM: Saved ${game.impactSurvivors.length} survivors`);
                         }
                         
                         // Gradually convert units (but skip the saved survivors)
@@ -12797,24 +12834,18 @@
                                 // Emergency overrides the full vote ritual
                                 const emergencyOverride = isDireEmergency && nation.superweaponProgress < 100;
 
-                                // Handle nation-flavored vote ritual (meter + announce) unless emergency
+                                // Handle nation-flavored vote ritual (simple race-track lights) unless emergency
                                 if (!emergencyOverride) {
-                                    // VOTING SYSTEM: 1-4 votes, 2+ votes needed to pass
-                                    const voteCount = 1 + Math.floor(Math.random() * 4); // 1, 2, 3, or 4 votes
-                                    const votesNeeded = Math.ceil(voteCount / 2); // 2+ needed to pass (majority)
-                                    const votesInFavor = votesNeeded + Math.floor(Math.random() * (voteCount - votesNeeded + 1)); // Always pass
-                                    
-                                    const voteDur = 6 + Math.random() * 4; // 6-10s ritual
+                                    // VOTING SYSTEM: Simple countdown lights (4 lights, ~1s per light)
+                                    const voteDur = 4; // 4 second countdown
                                     game.activeVote = {
                                         nationId: nation.id,
                                         endTime: performance.now() / 1000 + voteDur,
                                         label: getNationVoteLabel(nation),
                                         startedAt: performance.now() / 1000,
-                                        voteCount: voteCount,
-                                        votesNeeded: votesNeeded,
-                                        votesInFavor: votesInFavor
+                                        lightCount: 4  // 4 lights for race track
                                     };
-                                    Audio.announce(`${nation.name} commences ${getNationVoteLabel(nation)} - ${votesInFavor}/${voteCount} vote for superweapon release`, 'high');
+                                    Audio.announce(`${nation.name} initiating superweapon sequence`, 'high');
                                 }
 
                                 // Choose type based on nation characteristics
@@ -15727,39 +15758,58 @@
             ctx.fillText(`FPS: ${fps}  Speed: ${gameSpeed.toFixed(2)}x`, canvas.width - 8, 18);
             ctx.textAlign = 'left';
 
-            // Superweapon vote meter overlay (if active)
+            // Superweapon vote lights overlay (if active) - simple race track style
             if (game.activeVote) {
                 const voteNation = nations[game.activeVote.nationId];
                 const nowSec = performance.now() / 1000;
                 if (!voteNation || nowSec > (game.activeVote.endTime || 0) + 20) {
                     game.activeVote = null; // Cleanup if stale
                 } else {
-                    const total = (game.activeVote.endTime || nowSec) - (game.activeVote.startedAt || nowSec);
                     const remaining = Math.max(0, (game.activeVote.endTime || nowSec) - nowSec);
-                    const progress = total > 0 ? 1 - (remaining / total) : 1;
-                    const barWidth = 240;
-                    const barHeight = 16;
+                    const lightCount = game.activeVote.lightCount || 4;
+                    const lightsLit = Math.floor((1 - remaining / 4) * lightCount); // Progress through lights
+                    
                     const x = 12;
                     const y = canvas.height - 30;
+                    const lightSize = 16;
+                    const spacing = 20;
+                    
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-                    ctx.fillRect(x - 4, y - 6, barWidth + 8, barHeight + 12);
-                    ctx.fillStyle = '#222';
-                    ctx.fillRect(x, y, barWidth, barHeight);
-                    ctx.fillStyle = voteNation ? voteNation.color : '#00ff88';
-                    ctx.fillRect(x, y, barWidth * progress, barHeight);
-                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(x - 4, y - 6, (lightCount * spacing) + 8, lightSize + 12);
+                    
                     ctx.font = '12px monospace';
+                    ctx.fillStyle = '#ffffff';
                     ctx.textAlign = 'left';
+                    ctx.fillText(`${voteNation ? voteNation.name : 'Unknown'}: ${game.activeVote.label || 'Launch'}`, x, y - 4);
                     
-                    // Show vote count if available
-                    const voteText = game.activeVote.voteCount 
-                        ? `${voteNation ? voteNation.name : 'Unknown'}: ${game.activeVote.label || 'Vote'} (${game.activeVote.votesInFavor}/${game.activeVote.voteCount})`
-                        : `${voteNation ? voteNation.name : 'Unknown'}: ${game.activeVote.label || 'Vote'}`;
+                    // Draw race-track lights
+                    for (let i = 0; i < lightCount; i++) {
+                        const lightX = x + (i * spacing);
+                        const isLit = i < lightsLit;
+                        
+                        ctx.fillStyle = isLit ? voteNation.color : '#333333';
+                        ctx.beginPath();
+                        ctx.arc(lightX + lightSize / 2, y + lightSize / 2, lightSize / 2, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Glow on lit lights
+                        if (isLit) {
+                            ctx.strokeStyle = voteNation.color;
+                            ctx.lineWidth = 2;
+                            ctx.globalAlpha = 0.5;
+                            ctx.beginPath();
+                            ctx.arc(lightX + lightSize / 2, y + lightSize / 2, lightSize / 2 + 3, 0, Math.PI * 2);
+                            ctx.stroke();
+                            ctx.globalAlpha = 1.0;
+                        }
+                    }
                     
-                    ctx.fillText(voteText, x, y - 4);
-                    ctx.textAlign = 'right';
-                    ctx.fillText(`${Math.ceil(remaining)}s`, x + barWidth, y - 4);
-                    ctx.textAlign = 'left';
+                    // Beep when lights change
+                    const oldLightsLit = game.activeVote.lastLightsLit || 0;
+                    if (lightsLit > oldLightsLit && lightsLit <= lightCount) {
+                        Audio.playCountdownBeep(canvas.width / 2, y);
+                    }
+                    game.activeVote.lastLightsLit = lightsLit;
 
                     // If timer complete, finalize deployment if a callback exists
                     // NOTE: Vote completion now handled in gameLoop update phase, not here
