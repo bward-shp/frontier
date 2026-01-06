@@ -11395,6 +11395,8 @@
             impactTimer: 0, // Timer for impact animation
             impactWarningLevel: 0, // Destruction level when warning issued
             divineDestructionCount: 0, // Destruction from divine node wipes (no craters)
+            lastGlobalSuperweaponDeployTime: 0, // Prevent simultaneous superweapon deploys
+            maxActiveSuperweapons: 2, // Hard cap on active superweapons
             crossSpires: [], // Monuments to the fallen
             activeVote: null // Tracks nation superweapon vote meter for UI
         };
@@ -11597,7 +11599,7 @@
                 evaluateCataclysm(totalDestruction);
             } else {
                 // CLICK EMPTY SPACE: small divine detonation
-                Audio.playMissileImpact(clickX, clickY);
+                Audio.playSelfDestruct(clickX, clickY);
                 Audio.announce('Divine judgment strikes', 'low');
                 const blastRadius = 80;
                 // Damage all units in blast radius
@@ -12831,6 +12833,11 @@
                             const canDeploy = nation.superweaponProgress >= 100 || (isDireEmergency && nation.superweaponProgress >= 80);
                             
                             if (canDeploy) {
+                                // Prevent race condition: only one vote/deploy at a time globally
+                                if (game.activeVote) {
+                                    return; // Skip this nation if another vote is in progress
+                                }
+
                                 // Emergency overrides the full vote ritual
                                 const emergencyOverride = isDireEmergency && nation.superweaponProgress < 100;
 
@@ -12838,14 +12845,29 @@
                                 if (!emergencyOverride) {
                                     // VOTING SYSTEM: Simple countdown lights (4 lights, ~1s per light)
                                     const voteDur = 4; // 4 second countdown
-                                    game.activeVote = {
+                                    const startSec = performance.now() / 1000;
+                                    const vote = {
                                         nationId: nation.id,
-                                        endTime: performance.now() / 1000 + voteDur,
+                                        endTime: startSec + voteDur,
                                         label: getNationVoteLabel(nation),
-                                        startedAt: performance.now() / 1000,
-                                        lightCount: 4  // 4 lights for race track
+                                        startedAt: startSec,
+                                        lightCount: 4,  // 4 lights for race track
+                                        beepTimers: []
                                     };
+
+                                    // Beep pattern: beep beep beep Beeeeeeeep before deploy
+                                    const shortBeep = () => Audio.playCountdownBeep(canvas.width / 2, canvas.height - 30);
+                                    vote.beepTimers.push(setTimeout(shortBeep, 0));
+                                    vote.beepTimers.push(setTimeout(shortBeep, 900));
+                                    vote.beepTimers.push(setTimeout(shortBeep, 1800));
+                                    vote.beepTimers.push(setTimeout(() => Audio.playAlertTone(), 2800));
+
+                                    game.activeVote = vote;
                                     Audio.announce(`${nation.name} initiating superweapon sequence`, 'high');
+
+                                    // Reset progress immediately to prevent re-triggering
+                                    nation.superweaponProgress = 0;
+                                    nation.superweaponCooldown = 540;
                                 }
 
                                 // Choose type based on nation characteristics
@@ -12857,8 +12879,27 @@
                                 }
                                 
                                 const finalizeDeploy = () => {
+                                    const nowSec = performance.now() / 1000;
+
+                                    // Global cap: only allow two active superweapons at any time
+                                    if (superweapons.length >= game.maxActiveSuperweapons) {
+                                        Audio.announce(`${nation.name} aborts deployment: airspace saturated`, 'high');
+                                        game.activeVote = null;
+                                        return;
+                                    }
+
+                                    // Prevent simultaneous deployments: require spacing of 3 seconds
+                                    const spacing = 3;
+                                    const sinceLast = nowSec - (game.lastGlobalSuperweaponDeployTime || 0);
+                                    if (game.lastGlobalSuperweaponDeployTime && sinceLast < spacing) {
+                                        const delay = Math.max(0, (spacing - sinceLast) * 1000);
+                                        setTimeout(finalizeDeploy, delay);
+                                        return;
+                                    }
+
                                     const weapon = new Superweapon(capital.x, capital.y, nation.id, type);
                                     superweapons.push(weapon);
+                                    game.lastGlobalSuperweaponDeployTime = nowSec;
 
                                     // Play deployment power-up sound
                                     Audio.playSuperweaponDeploy(capital.x, capital.y);
@@ -12890,7 +12931,14 @@
                                     nation.superweaponProgress = 0;
                                     nation.superweaponCooldown = 540; // 9 minute cooldown (increased)
                                     nation.lastSuperweaponDeployTime = performance.now() / 1000; // Track deployment time for stagger
-                                    game.activeVote = null;
+
+                                    // Clear vote and beep timers
+                                    if (game.activeVote) {
+                                        if (game.activeVote.beepTimers) {
+                                            game.activeVote.beepTimers.forEach(timer => clearTimeout(timer));
+                                        }
+                                        game.activeVote = null;
+                                    }
                                 };
 
                                 // If a ritual is active, defer deploy until vote ends; emergency deploys immediately
@@ -12911,6 +12959,10 @@
                 const nowSec = performance.now() / 1000;
                 if (nowSec >= (game.activeVote.endTime || 0)) {
                     const cb = game.activeVote.onComplete;
+                    // Clear beep timers before clearing vote
+                    if (game.activeVote.beepTimers) {
+                        game.activeVote.beepTimers.forEach(timer => clearTimeout(timer));
+                    }
                     game.activeVote = null;
                     if (typeof cb === 'function') {
                         cb(); // Invoke finalizeDeploy
