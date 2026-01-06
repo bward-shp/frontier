@@ -3324,15 +3324,15 @@
                                 a.isDecrypted
                             );
                             if (hasDecryptedKeycode) {
-                                bonuses.superweaponDamage *= 3.0; // Spear + decrypted Keycode = 3x
+                                bonuses.superweaponDamage *= 2.0; // Spear + decrypted Keycode = 2x (nerfed)
                             } else {
-                                bonuses.superweaponDamage *= 2.0; // Spear alone = 2x
+                                bonuses.superweaponDamage *= 1.5; // Spear alone = 1.5x (nerfed)
                             }
                         }
                         
                         // Advanced Blueprint + Research Data combo
                         else if (artifact.type === 'blueprint' && ownedTypes.includes('data')) {
-                            bonuses.nodeCapture *= 4.0; // Blueprint + Data = 4x capture
+                            bonuses.nodeCapture *= 2.5; // Blueprint + Data = 2.5x capture (nerfed)
                         }
                         
                         // Studied Strategic Plans (NO weapon requirement) - TIMED BONUS
@@ -3343,7 +3343,7 @@
                         
                         // Decrypted Keycode alone
                         else if (artifact.type === 'keycode' && artifact.isDecrypted) {
-                            bonuses.nodeCapture *= 2.0; // Decrypted Keycode = 2x capture
+                            bonuses.nodeCapture *= 1.6; // Decrypted Keycode = 1.6x capture (nerfed)
                         }
                     }
                 }
@@ -3381,9 +3381,33 @@
             // === CONSUMED ARTIFACTS (permanent bonuses) ===
             // Track consumed Research Data bonuses
             if (!nation.consumedBonuses) nation.consumedBonuses = { dataConsumed: 0 };
-            bonuses.superweaponBuild *= (1.0 + nation.consumedBonuses.dataConsumed * 2.0); // Each consumed Data = +2x
+            bonuses.superweaponBuild *= Math.min(3.0, 1.0 + nation.consumedBonuses.dataConsumed * 0.75); // Softer scaling per Data, capped
             
             return bonuses;
+        }
+
+        // Nation-specific superweapon vote labels
+        function getNationVoteLabel(nation) {
+            const templateIdx = nation.templateIndex ?? nation.id ?? 0;
+            const labels = [
+                'Dogma Vote',       // NERVAR
+                'Council Accord',   // ZELUS
+                'Strike Charter',   // VALKYRY
+                'Magi Verdict',     // PRAXEN
+                'Solar Edict',      // SOLARIS
+                'Forge Tribunal',   // BARONIX
+                'Warden Convocation', // ATRION
+                'Guild Ledger Vote',  // TORGUILD
+                'Sanctum Consistory', // BENEDICTA
+                'Directive Clone Vote', // VYRAX
+                'Salvage Board Ruling', // LANGWAYS
+                'Omniforge Hammerfall', // OMNISCENE
+                'Matrix Consensus',     // CYBRYNE
+                'Provision Tide Vote',  // VOLUX
+                'Cartel Cipher Vote',   // TYRANEL
+                'Regime Tribunal'       // HEGEMYR
+            ];
+            return labels[templateIdx % labels.length];
         }
         
         // Special artifacts and items that spawn on the map
@@ -3510,8 +3534,8 @@
                     this.crackTime = 300; // 5 minutes to crack without key
                     this.color = '#00FFFF';
                     this.movable = false; // FACILITY - stationary
-                    this.generationInterval = 120; // Generate Research Data every 2 minutes while controlled
-                    this.spawnDelay = 90; // Appears 90 seconds into game
+                    this.generationInterval = 240; // Generate Research Data every 4 minutes while controlled
+                    this.spawnDelay = 180; // Appears 3 minutes into game
                     this.captureSpeed = 0.35; // Major facility - very slow capture
                     this.hasSpawned = false;
                 } else if (type === 'lab_key') {
@@ -3519,18 +3543,18 @@
                     this.bonus = {};
                     this.color = '#00AAAA';
                     this.movable = true;
-                    this.spawnDelay = 0; // Available immediately
-                    this.captureSpeed = 1.2; // Easier to grab
+                    this.spawnDelay = 120; // Appears 2 minutes in
+                    this.captureSpeed = 0.9; // Harder to grab
                     this.hasSpawned = true;
                 } else if (type === 'data') {
                     this.name = 'Research Data';
                     this.description = 'Study at Lab (60s) → Bring to Capital → Consume for 2x superweapon build speed (degrades over 3min)';
                     this.bonus = {}; // No bonus until studied + consumed
-                    this.studyTime = 60; // Must study at Lab for 1 minute
+                    this.studyTime = 90; // Must study at Lab for 1.5 minutes
                     this.color = '#3333FF';
                     this.movable = true;
                     this.hasSpawned = true; // Generated later
-                    this.degradationTime = 180; // Degrades over 3 minutes (fresh 0-120s, degraded 120-180s, trash after 180s)
+                    this.degradationTime = 150; // Degrades over 2.5 minutes (fresh 0-90s, degraded 90-150s, trash after 150s)
                     this.createdAt = performance.now() / 1000;
                     // After study: consume at capital for 2x superweapon build (permanent)
                 } else if (type === 'safe') {
@@ -3548,8 +3572,8 @@
                     this.bonus = {};
                     this.color = '#FFAA00';
                     this.movable = true;
-                    this.spawnDelay = 120; // Appears 2 minutes in
-                    this.captureSpeed = 1.0;
+                    this.spawnDelay = 240; // Appears 4 minutes in
+                    this.captureSpeed = 0.8;
                     this.hasSpawned = false;
                 } else if (type === 'spear') {
                     this.name = 'Spear of Longitude';
@@ -3557,7 +3581,7 @@
                     this.color = '#FFD700';
                     this.movable = true;
                     this.hasSpawned = false; // Inside safe
-                    this.captureSpeed = 0.8; // Valuable, harder to secure
+                    this.captureSpeed = 0.6; // Valuable, harder to secure
                     // At capital: 2x superweapon damage, 3x with decrypted Keycode
                 }
                 
@@ -3570,24 +3594,24 @@
                     this.crackTime = 420; // 7 minutes to bypass without card
                     this.color = '#FFFF00';
                     this.movable = false; // FACILITY - stationary
-                    this.spawnDelay = 60; // Appears 1 minute in
-                    this.captureSpeed = 0.6; // Hard to capture
+                    this.spawnDelay = 180; // Appears 3 minutes in
+                    this.captureSpeed = 0.5; // Hard to capture
                     this.hasSpawned = false;
                 } else if (type === 'access_card') {
                     this.name = 'Security Access Card';
                     this.bonus = {};
                     this.color = '#FF8800';
                     this.movable = true;
-                    this.spawnDelay = 30; // Appears 30 seconds in
-                    this.captureSpeed = 1.0;
+                    this.spawnDelay = 150; // Appears 2.5 minutes in
+                    this.captureSpeed = 0.8;
                     this.hasSpawned = false;
                 } else if (type === 'auth_code') {
                     this.name = 'Authorization Code';
                     this.bonus = { unitDamage: 2.0 }; // 2x damage standalone
                     this.color = '#00FF88';
                     this.movable = true;
-                    this.spawnDelay = 105; // Appears 1.75 minutes in
-                    this.captureSpeed = 1.0;
+                    this.spawnDelay = 210; // Appears 3.5 minutes in
+                    this.captureSpeed = 0.8;
                     this.hasSpawned = false;
                 } else if (type === 'prototype') {
                     this.name = 'Weapon Prototype';
@@ -3597,8 +3621,8 @@
                     this.crackTime = 480; // 8 minutes to hack without auth code
                     this.color = '#FF0088';
                     this.movable = false; // FACILITY - stationary
-                    this.spawnDelay = 75; // Appears 1.25 minutes in
-                    this.captureSpeed = 0.65; // Hard to capture
+                    this.spawnDelay = 210; // Appears 3.5 minutes in
+                    this.captureSpeed = 0.5; // Hard to capture
                     this.hasSpawned = false;
                 }
                 
@@ -3607,11 +3631,11 @@
                     this.name = 'Encrypted Keycode';
                     this.description = 'Decrypt at Intelligence node (90s) → 2x node capture speed + unlocks Blueprint generation';
                     this.bonus = {}; // No bonus until decrypted
-                    this.decryptTime = 90; // Must decrypt at Archive (Intelligence) nodes
+                    this.decryptTime = 150; // Must decrypt at Archive (Intelligence) nodes
                     this.color = '#FFFF00';
                     this.movable = true;
-                    this.spawnDelay = 150; // Appears 2.5 minutes in
-                    this.captureSpeed = 0.9; // Slightly harder
+                    this.spawnDelay = 300; // Appears 5 minutes in
+                    this.captureSpeed = 0.7; // Harder
                     this.hasSpawned = false;
                     // After decryption: 2x node capture + unlocks Blueprint generation
                 } else if (type === 'blueprint') {
@@ -3621,10 +3645,10 @@
                     this.unlocks = 'With Research Data: 4x node capture';
                     this.color = '#8800FF';
                     this.movable = true;
-                    this.spawnDelay = 180; // Appears 3 minutes in
-                    this.captureSpeed = 0.85; // Harder to secure
+                    this.spawnDelay = 360; // Appears 6 minutes in
+                    this.captureSpeed = 0.7; // Harder to secure
                     this.hasSpawned = false;
-                    this.degradationTime = 240; // Degrades over 4 minutes (fresh 0-160s, degraded 160-240s, trash after 240s)
+                    this.degradationTime = 180; // Degrades over 3 minutes (fresh 0-120s, degraded 120-180s, trash after 180s)
                     // Generated at Forge (Efficiency) nodes when Keycode is decrypted
                 }
                 
@@ -3634,20 +3658,20 @@
                     this.bonus = { unitDamage: 1.5 }; // 1.5x damage standalone
                     this.color = '#FF33FF';
                     this.movable = true;
-                    this.spawnDelay = 45; // Appears 45 seconds in
-                    this.captureSpeed = 1.0;
+                    this.spawnDelay = 150; // Appears 2.5 minutes in
+                    this.captureSpeed = 0.9;
                     this.hasSpawned = false;
                 } else if (type === 'plans') {
                     this.name = 'Strategic Plans';
                     this.bonus = {}; // No bonus until studied
-                    this.studyTime = 75; // Must study at Nexus (Movement Hub) nodes
-                    this.bonusDuration = 120; // Bonus lasts for 2 minutes after study
+                    this.studyTime = 120; // Must study at Nexus (Movement Hub) nodes
+                    this.bonusDuration = 90; // Bonus lasts for 1.5 minutes after study
                     this.color = '#33FF33';
                     this.movable = true;
-                    this.spawnDelay = 0; // Available immediately
-                    this.captureSpeed = 1.1; // Easy to grab
+                    this.spawnDelay = 90; // Available after 1.5 minutes
+                    this.captureSpeed = 0.9; // Harder to grab
                     this.hasSpawned = true;
-                    this.degradationTime = 180; // Degrades over 3 minutes (fresh 0-120s, degraded 120-180s, trash after 180s)
+                    this.degradationTime = 150; // Degrades over 2.5 minutes (fresh 0-90s, degraded 90-150s, trash after 150s)
                     this.createdAt = performance.now() / 1000;
                     // After study: 2.5x speed at capital (NO weapon requirement)
                     // Generated at Nexus nodes while controlled
@@ -4143,8 +4167,13 @@
                                         spear.hasSpawned = true; // Make it capturable immediately
                                         artifacts.push(spear);
                                         console.log(`SPEAR SPAWNED via cracking at (${this.x}, ${this.y}) for nation ${this.capturedBy}`);
+                                        logAIEvent('artifact', 'Spear of Longitude revealed (only instance)', {
+                                            x: this.x,
+                                            y: this.y,
+                                            nationId: this.capturedBy
+                                        });
                                         if (unlockingNation) {
-                                            Audio.announce(`${unlockingNation.name} finds Spear of Longitude inside!`, 'high', this.capturedBy);
+                                            Audio.announce(`${unlockingNation.name} finds THE Spear of Longitude (sole artifact) inside!`, 'high', this.capturedBy);
                                         }
                                     }
                                     this.hasSpawnedContents = true;
@@ -4558,6 +4587,20 @@
                             // Assign new carrier
                             this.carrier = closestUnit.unit;
                             
+                            // SPEAR: announce who wields it and log holder
+                            if (this.type === 'spear') {
+                                const carrierNation = nations[closestUnit.nation];
+                                const holderName = closestUnit.unit.isSuperweapon
+                                    ? (closestUnit.unit.name || 'Superweapon')
+                                    : `${carrierNation ? carrierNation.name : 'Unknown nation'} unit`;
+                                Audio.announce(`${holderName} now wields the Spear of Longitude`, 'high', closestUnit.nation);
+                                logAIEvent('artifact', 'Spear taken', {
+                                    nationId: closestUnit.nation,
+                                    carrierType: closestUnit.unit.isSuperweapon ? 'superweapon' : 'unit',
+                                    carrierName: holderName
+                                });
+                            }
+                            
                             // For spear specifically, also set carriedSpear property for superweapons
                             if (this.type === 'spear' && closestUnit.unit.isSuperweapon) {
                                 closestUnit.unit.carriedSpear = this;
@@ -4623,9 +4666,10 @@
                 }
                 
                 // HIDE STORED ARTIFACTS - only show in inventory UI, not as big visuals
-                // Facilities stay visible, movable items hide when stored
+                // EXCEPTION: Spear is always visible so players know where it is
+                // Facilities stay visible, movable items hide when stored (except spear)
                 const isFacility = ['lab', 'reactor', 'prototype', 'safe'].includes(this.type);
-                if (this.storedAtNode && !isFacility) {
+                if (this.storedAtNode && !isFacility && this.type !== 'spear') {
                     return; // Don't render stored movable items - inventory UI will show them
                 }
                 
@@ -5083,6 +5127,7 @@
                 this.combatStateTimer = 0; // Time in current state
                 this.combatTarget = null; // Current combat opponent
                 this.personalSpaceRadius = 120; // Minimum distance from other superweapons
+                this.stunTimer = 0; // Divine stun effect (immobilized when > 0)
                 
                 // Get unique name from nation's pool
                 const nation = nations[ownerNation];
@@ -5132,6 +5177,7 @@
                 this.screamCooldown = Math.max(0, this.screamCooldown - dt);
                 this.duelImmunityTimer = Math.max(0, this.duelImmunityTimer - dt);
                 this.stabAnimationTimer = Math.max(0, this.stabAnimationTimer - dt);
+                this.stunTimer = Math.max(0, this.stunTimer - dt);
                 
                 // Update attack effect timer
                 if (this.attackEffect && this.attackEffect.timer > 0) {
@@ -5140,6 +5186,13 @@
                 
                 if (this.duelImmunityTimer === 0) {
                     this.lastDuelOpponent = null;
+                }
+                
+                // STUN CHECK - if stunned, freeze in place and skip all logic
+                if (this.stunTimer > 0) {
+                    this.vx = 0;
+                    this.vy = 0;
+                    return;
                 }
                 
                 // SPEAR HUNTING: Superweapons hunt the Spear of Longitude
@@ -11340,7 +11393,8 @@
             destructionThreshold: 25, // Number of craters to trigger impact
             impactInProgress: false, // Currently executing impact sequence
             impactTimer: 0, // Timer for impact animation
-            crossSpires: [] // Monuments to the fallen
+            crossSpires: [], // Monuments to the fallen
+            activeVote: null // Tracks nation superweapon vote meter for UI
         };
         
         // ===== AI DEBUG LOG SYSTEM =====
@@ -11416,6 +11470,111 @@
         // Log game start
         logAIEvent('game', 'Game initialized', { timestamp: new Date().toISOString() });
         // ===== END AI DEBUG LOG SYSTEM =====
+        
+        // ===== DIVINE CURSOR POWERS =====
+        // Hidden god mode: player can click to interact with game state
+        canvas.addEventListener('click', (event) => {
+            if (!game.hasStarted) return; // No divine powers before game starts
+            
+            const rect = canvas.getBoundingClientRect();
+            const clickX = (event.clientX - rect.left) / rect.width * canvas.width;
+            const clickY = (event.clientY - rect.top) / rect.height * canvas.height;
+            
+            // HIT TEST: Check what was clicked
+            let hitTarget = null;
+            let hitType = null;
+            let hitDist = Infinity;
+            
+            // Check superweapons first (highest priority)
+            for (let sw of superweapons) {
+                const dist = Math.hypot(sw.x - clickX, sw.y - clickY);
+                if (dist < 20 && dist < hitDist) {
+                    hitTarget = sw;
+                    hitType = 'superweapon';
+                    hitDist = dist;
+                }
+            }
+            
+            // Check nodes
+            for (let node of nodes) {
+                const dist = Math.hypot(node.x - clickX, node.y - clickY);
+                if (dist < 15 && dist < hitDist) {
+                    hitTarget = node;
+                    hitType = 'node';
+                    hitDist = dist;
+                }
+            }
+            
+            // Execute divine power
+            if (hitType === 'superweapon') {
+                // STUN superweapon for 5 seconds
+                hitTarget.stunTimer = 5.0;
+                Audio.playAlertTone();
+                Audio.announce('Divine intervention: superweapon stunned', 'high');
+            } else if (hitType === 'node') {
+                // DESTROY node
+                if (hitTarget.owner >= 0) {
+                    const owner = nations[hitTarget.owner];
+                    Audio.announce(`Divine wrath destroys ${owner.name} node`, 'high');
+                }
+                // Distribute units that were at this node
+                hitTarget.units = 0; // Clear garrison
+                // Remove node from map
+                const idx = nodes.indexOf(hitTarget);
+                if (idx >= 0) nodes.splice(idx, 1);
+                // Play explosion sound
+                Audio.playSelfDestruct(hitTarget.x, hitTarget.y);
+                const blastRadius = 100;
+                // Damage all units in blast radius
+                nations.forEach(nation => {
+                    nation.units.forEach(unit => {
+                        const dist = Math.hypot(unit.x - hitTarget.x, unit.y - hitTarget.y);
+                        if (dist < blastRadius) {
+                            const dmg = 200 * (1 - dist / blastRadius); // Max 200 at center, 0 at edge
+                            unit.health = Math.max(0, unit.health - dmg);
+                        }
+                    });
+                });
+                detonationEffects.push({
+                    x: hitTarget.x,
+                    y: hitTarget.y,
+                    radius: blastRadius,
+                    maxRadius: blastRadius,
+                    duration: 1.5,
+                    timer: 0,
+                    maxAge: 0.5,
+                    age: 0,
+                    damage: 200
+                });
+            } else {
+                // CLICK EMPTY SPACE: small divine detonation
+                Audio.playMissileImpact(clickX, clickY);
+                Audio.announce('Divine judgment strikes', 'low');
+                const blastRadius = 80;
+                // Damage all units in blast radius
+                nations.forEach(nation => {
+                    nation.units.forEach(unit => {
+                        const dist = Math.hypot(unit.x - clickX, unit.y - clickY);
+                        if (dist < blastRadius) {
+                            const dmg = 100 * (1 - dist / blastRadius); // Max 100 at center, 0 at edge
+                            unit.health = Math.max(0, unit.health - dmg);
+                        }
+                    });
+                });
+                detonationEffects.push({
+                    x: clickX,
+                    y: clickY,
+                    radius: blastRadius,
+                    maxRadius: blastRadius,
+                    duration: 1.5,
+                    timer: 0,
+                    maxAge: 0.5,
+                    age: 0,
+                    damage: 100
+                });
+            }
+        });
+        // ===== END DIVINE CURSOR POWERS =====
         
         // Game loop with performance optimizations
         let lastTime = performance.now();
@@ -12590,11 +12749,11 @@
                 
                 // DEPLOYMENT RULES:
                 // - Default: Only deploy ONE superweapon at a time
-                // - Exception: If 2+ enemy superweapons exist, can match their count
+                // - Exception: If 2+ enemy superweapons exist, can match up to 2
                 // - Always maintain stagger delay between deployments (lastSuperweaponDeployTime)
                 let desiredCount = 1; // Default: one at a time
                 if (enemySuperweapons.length >= 2) {
-                    desiredCount = Math.min(enemySuperweapons.length, 3); // Match enemies up to max of 3
+                    desiredCount = Math.min(enemySuperweapons.length, 2); // Match enemies up to 2 max
                 }
                 
                 // Decrease cooldown
@@ -12611,9 +12770,9 @@
                 const canDeployTiming = timeSinceLastDeploy > 60 || nation.lastSuperweaponDeployTime === 0;
                 
                 // Build progress when not on cooldown and below desired count
-                if (nation.superweaponCooldown <= 0 && nodeCount >= 3 && mySuperweapons.length < desiredCount && canDeployTiming) {
+                if (nation.superweaponCooldown <= 0 && nodeCount >= 6 && mySuperweapons.length < desiredCount && canDeployTiming) {
                     const bonuses = getArtifactBonuses(nation.id);
-                    nation.superweaponProgress += dt * 0.5 * bonuses.superweaponBuild; // Artifact bonus speeds up build
+                    nation.superweaponProgress += dt * 0.25 * bonuses.superweaponBuild; // Slower baseline build; artifact bonus still applies
                     
                     // Cap at 100% - only deploy when fully charged OR dire emergency
                     nation.superweaponProgress = Math.min(100, nation.superweaponProgress);
@@ -12635,6 +12794,29 @@
                             const canDeploy = nation.superweaponProgress >= 100 || (isDireEmergency && nation.superweaponProgress >= 80);
                             
                             if (canDeploy) {
+                                // Emergency overrides the full vote ritual
+                                const emergencyOverride = isDireEmergency && nation.superweaponProgress < 100;
+
+                                // Handle nation-flavored vote ritual (meter + announce) unless emergency
+                                if (!emergencyOverride) {
+                                    // VOTING SYSTEM: 1-4 votes, 2+ votes needed to pass
+                                    const voteCount = 1 + Math.floor(Math.random() * 4); // 1, 2, 3, or 4 votes
+                                    const votesNeeded = Math.ceil(voteCount / 2); // 2+ needed to pass (majority)
+                                    const votesInFavor = votesNeeded + Math.floor(Math.random() * (voteCount - votesNeeded + 1)); // Always pass
+                                    
+                                    const voteDur = 6 + Math.random() * 4; // 6-10s ritual
+                                    game.activeVote = {
+                                        nationId: nation.id,
+                                        endTime: performance.now() / 1000 + voteDur,
+                                        label: getNationVoteLabel(nation),
+                                        startedAt: performance.now() / 1000,
+                                        voteCount: voteCount,
+                                        votesNeeded: votesNeeded,
+                                        votesInFavor: votesInFavor
+                                    };
+                                    Audio.announce(`${nation.name} commences ${getNationVoteLabel(nation)} - ${votesInFavor}/${voteCount} vote for superweapon release`, 'high');
+                                }
+
                                 // Choose type based on nation characteristics
                                 let type = 'prototype';
                                 if (nation.personality.aggressive > 0.7) {
@@ -12643,44 +12825,67 @@
                                     type = 'eva';
                                 }
                                 
-                                const weapon = new Superweapon(capital.x, capital.y, nation.id, type);
-                                superweapons.push(weapon);
-                                
-                                // Play deployment power-up sound
-                                Audio.playSuperweaponDeploy(capital.x, capital.y);
-                                
-                                // ALWAYS ANNOUNCE SUPERWEAPON DEPLOYMENTS - no rate limiting
-                                // Get color name from nation color - MUST match exact hex codes from nationColors
-                                const colorMap = {
-                                    '#FF0000': 'red', '#00FF00': 'green', '#0080FF': 'blue',
-                                    '#FFFF00': 'yellow', '#FF00FF': 'magenta', '#00FFFF': 'cyan',
-                                    '#FF8000': 'orange', '#8000FF': 'purple', '#FFFFFF': 'white',
-                                    '#808080': 'gray', '#FF0080': 'rose', '#00FF80': 'spring',
-                                    '#0080C0': 'deep sky', '#C08000': 'iodine', '#80FF00': 'blueburn',
-                                    '#C00000': 'blood red'
+                                const finalizeDeploy = () => {
+                                    const weapon = new Superweapon(capital.x, capital.y, nation.id, type);
+                                    superweapons.push(weapon);
+
+                                    // Play deployment power-up sound
+                                    Audio.playSuperweaponDeploy(capital.x, capital.y);
+
+                                    // ALWAYS ANNOUNCE SUPERWEAPON DEPLOYMENTS - no rate limiting
+                                    // Get color name from nation color - MUST match exact hex codes from nationColors
+                                    const colorMap = {
+                                        '#FF0000': 'red', '#00FF00': 'green', '#0080FF': 'blue',
+                                        '#FFFF00': 'yellow', '#FF00FF': 'magenta', '#00FFFF': 'cyan',
+                                        '#FF8000': 'orange', '#8000FF': 'purple', '#FFFFFF': 'white',
+                                        '#808080': 'gray', '#FF0080': 'rose', '#00FF80': 'spring',
+                                        '#0080C0': 'deep sky', '#C08000': 'iodine', '#80FF00': 'blueburn',
+                                        '#C00000': 'blood red'
+                                    };
+                                    const colorName = colorMap[nation.color] || 'unknown';
+
+                                    // Announce deployment with fleet status (count includes the one just deployed)
+                                    const myActiveCount = superweapons.filter(sw => sw.ownerNation === nation.id).length;
+                                    const fleetStatus = myActiveCount === 1 ? 'first unit' : myActiveCount === 2 ? 'second unit' : 'fleet complete';
+
+                                    // Announce emergency deployment if not fully charged
+                                    if (emergencyOverride) {
+                                        Audio.announce(`${getNationVoteLabel(nation)} overrides protocol. ${nation.name} deploys ${weapon.name} at ${Math.floor(nation.superweaponProgress)}% charge`, 'high');
+                                    } else {
+                                        Audio.announce(`Pattern ${colorName}. ${nation.name} deploys ${weapon.name}, ${fleetStatus}`, 'high');
+                                    }
+                                    Audio.playTensionSiren();
+
+                                    nation.superweaponProgress = 0;
+                                    nation.superweaponCooldown = 540; // 9 minute cooldown (increased)
+                                    nation.lastSuperweaponDeployTime = performance.now() / 1000; // Track deployment time for stagger
+                                    game.activeVote = null;
                                 };
-                                const colorName = colorMap[nation.color] || 'unknown';
-                                
-                                // Announce deployment with fleet status (count includes the one just deployed)
-                                const myActiveCount = superweapons.filter(sw => sw.ownerNation === nation.id).length;
-                                const fleetStatus = myActiveCount === 1 ? 'first unit' : myActiveCount === 2 ? 'second unit' : 'fleet complete';
-                                
-                                // Announce emergency deployment if not fully charged
-                                if (isDireEmergency && nation.superweaponProgress < 100) {
-                                    Audio.announce(`EMERGENCY. ${nation.name} deploys ${weapon.name} at ${Math.floor(nation.superweaponProgress)}% charge`, 'high');
+
+                                // If a ritual is active, defer deploy until vote ends; emergency deploys immediately
+                                if (game.activeVote && !emergencyOverride) {
+                                    game.activeVote.onComplete = finalizeDeploy;
                                 } else {
-                                    Audio.announce(`Pattern ${colorName}. ${nation.name} deploys ${weapon.name}, ${fleetStatus}`, 'high');
+                                    finalizeDeploy();
                                 }
-                                Audio.playTensionSiren();
-                                
-                                nation.superweaponProgress = 0;
-                                nation.superweaponCooldown = 420; // 7 minute cooldown (increased from 5 minutes)
-                                nation.lastSuperweaponDeployTime = performance.now() / 1000; // Track deployment time for stagger
                             }
                         }
                     }
                 }
             });
+            
+            // PROCESS VOTE COMPLETION BEFORE ANYTHING ELSE
+            // This ensures votes resolve cleanly on their first expiration frame
+            if (game.activeVote) {
+                const nowSec = performance.now() / 1000;
+                if (nowSec >= (game.activeVote.endTime || 0)) {
+                    const cb = game.activeVote.onComplete;
+                    game.activeVote = null;
+                    if (typeof cb === 'function') {
+                        cb(); // Invoke finalizeDeploy
+                    }
+                }
+            }
             
             // Update superweapons FIRST to calculate attackPower for this frame
             // allUnits already declared above, just reassign it here
@@ -15179,26 +15384,36 @@
                         // Fireball - roiling orange and red
                         ctx.globalAlpha = effect.alpha * 0.7;
                         
-                        const fireProgress = (progress - 0.25) / 0.75;
-                        const gradient = ctx.createRadialGradient(
-                            effect.x, effect.y, 0,
-                            effect.x, effect.y, effect.radius
-                        );
+                        // Safety check - ensure radius is valid and positive
+                        const effectRadius = Math.max(1, isFinite(effect.radius) ? effect.radius : 50);
+                        const effectX = isFinite(effect.x) ? effect.x : 0;
+                        const effectY = isFinite(effect.y) ? effect.y : 0;
+                        const fireProgress = Math.max(0, Math.min(1, (progress - 0.25) / 0.75)); // Clamp to 0-1
                         
-                        // Color shift from yellow-white to deep red as it fades
-                        const coreRed = 255;
-                        const coreGreen = Math.floor(200 - fireProgress * 150);
-                        const coreBlue = Math.floor(100 - fireProgress * 100);
-                        
-                        gradient.addColorStop(0, `rgba(${coreRed}, ${coreGreen}, ${coreBlue}, 1.0)`);
-                        gradient.addColorStop(0.4, 'rgba(255, 120, 40, 0.8)');
-                        gradient.addColorStop(0.7, 'rgba(200, 60, 20, 0.5)');
-                        gradient.addColorStop(0.9, 'rgba(120, 30, 10, 0.2)');
-                        gradient.addColorStop(1, 'rgba(80, 20, 5, 0)');
-                        
-                        ctx.fillStyle = gradient;
+                        try {
+                            const gradient = ctx.createRadialGradient(
+                                effectX, effectY, 0,
+                                effectX, effectY, effectRadius
+                            );
+                            
+                            // Color shift from yellow-white to deep red as it fades
+                            const coreRed = 255;
+                            const coreGreen = Math.max(0, Math.min(255, Math.floor(200 - fireProgress * 150)));
+                            const coreBlue = Math.max(0, Math.min(255, Math.floor(100 - fireProgress * 100)));
+                            
+                            gradient.addColorStop(0, `rgba(${coreRed}, ${coreGreen}, ${coreBlue}, 1.0)`);
+                            gradient.addColorStop(0.4, 'rgba(255, 120, 40, 0.8)');
+                            gradient.addColorStop(0.7, 'rgba(200, 60, 20, 0.5)');
+                            gradient.addColorStop(0.9, 'rgba(120, 30, 10, 0.2)');
+                            gradient.addColorStop(1, 'rgba(80, 20, 5, 0)');
+                            
+                            ctx.fillStyle = gradient;
+                        } catch (e) {
+                            // Fallback: use solid color if gradient fails
+                            ctx.fillStyle = 'rgba(255, 100, 50, 0.7)';
+                        }
                         ctx.beginPath();
-                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.arc(effectX, effectY, effectRadius, 0, Math.PI * 2);
                         ctx.fill();
                         
                         // Add smoke ring at the edge
@@ -15207,7 +15422,7 @@
                             ctx.strokeStyle = 'rgba(60, 60, 60, 0.8)';
                             ctx.lineWidth = 12;
                             ctx.beginPath();
-                            ctx.arc(effect.x, effect.y, effect.radius * 1.05, 0, Math.PI * 2);
+                            ctx.arc(effectX, effectY, effectRadius * 1.05, 0, Math.PI * 2);
                             ctx.stroke();
                         }
                     }
@@ -15495,7 +15710,7 @@
                 
                 ctx.font = '24px monospace';
                 ctx.fillStyle = '#00ddff';
-                ctx.fillText('Autonomous Frontier Combatant Units', canvas.width / 2, canvas.height / 2 + 60);
+                ctx.fillText('Autonomous Frontier Combat Units', canvas.width / 2, canvas.height / 2 + 60);
                 ctx.textAlign = 'left';
             }
             
@@ -15511,6 +15726,46 @@
             ctx.textAlign = 'right';
             ctx.fillText(`FPS: ${fps}  Speed: ${gameSpeed.toFixed(2)}x`, canvas.width - 8, 18);
             ctx.textAlign = 'left';
+
+            // Superweapon vote meter overlay (if active)
+            if (game.activeVote) {
+                const voteNation = nations[game.activeVote.nationId];
+                const nowSec = performance.now() / 1000;
+                if (!voteNation || nowSec > (game.activeVote.endTime || 0) + 20) {
+                    game.activeVote = null; // Cleanup if stale
+                } else {
+                    const total = (game.activeVote.endTime || nowSec) - (game.activeVote.startedAt || nowSec);
+                    const remaining = Math.max(0, (game.activeVote.endTime || nowSec) - nowSec);
+                    const progress = total > 0 ? 1 - (remaining / total) : 1;
+                    const barWidth = 240;
+                    const barHeight = 16;
+                    const x = 12;
+                    const y = canvas.height - 30;
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+                    ctx.fillRect(x - 4, y - 6, barWidth + 8, barHeight + 12);
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(x, y, barWidth, barHeight);
+                    ctx.fillStyle = voteNation ? voteNation.color : '#00ff88';
+                    ctx.fillRect(x, y, barWidth * progress, barHeight);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = '12px monospace';
+                    ctx.textAlign = 'left';
+                    
+                    // Show vote count if available
+                    const voteText = game.activeVote.voteCount 
+                        ? `${voteNation ? voteNation.name : 'Unknown'}: ${game.activeVote.label || 'Vote'} (${game.activeVote.votesInFavor}/${game.activeVote.voteCount})`
+                        : `${voteNation ? voteNation.name : 'Unknown'}: ${game.activeVote.label || 'Vote'}`;
+                    
+                    ctx.fillText(voteText, x, y - 4);
+                    ctx.textAlign = 'right';
+                    ctx.fillText(`${Math.ceil(remaining)}s`, x + barWidth, y - 4);
+                    ctx.textAlign = 'left';
+
+                    // If timer complete, finalize deployment if a callback exists
+                    // NOTE: Vote completion now handled in gameLoop update phase, not here
+                    // This render-phase code is a safety fallback only
+                }
+            }
             
             requestAnimationFrame(gameLoop);
         } // End of gameLoop function
