@@ -11718,12 +11718,14 @@
                             game.impactSurvivors = [];
                             nations.forEach(nation => {
                                 if (nation.units.length > 0) {
-                                    // Save 1-2 units per nation as survivors
-                                    const survivorCount = Math.min(2, nation.units.length);
+                                    // Save 3-6 units per nation as survivors (increased for better rebirth)
+                                    const survivorCount = Math.min(6, Math.max(3, Math.floor(nation.units.length * 0.15)));
                                     const survivors = [];
                                     
-                                    for (let i = 0; i < survivorCount; i++) {
-                                        const unit = nation.units[i];
+                                    // Pick survivors from different areas for dispersed rebirth
+                                    const step = Math.max(1, Math.floor(nation.units.length / survivorCount));
+                                    for (let i = 0; i < survivorCount && i * step < nation.units.length; i++) {
+                                        const unit = nation.units[i * step];
                                         survivors.push({
                                             x: unit.x,
                                             y: unit.y,
@@ -11735,9 +11737,22 @@
                                     }
                                     
                                     game.impactSurvivors.push(...survivors);
+                                } else if (!nation.capitulated) {
+                                    // Even nations with no units get 1 survivor if not capitulated
+                                    const capital = nation.capital;
+                                    if (capital) {
+                                        game.impactSurvivors.push({
+                                            x: capital.x,
+                                            y: capital.y,
+                                            nationId: nation.id,
+                                            health: 100,
+                                            strength: 50,
+                                            veterancy: 0
+                                        });
+                                    }
                                 }
                             });
-                            console.log(`🌍 CATACLYSM: Saved ${game.impactSurvivors.length} survivors`);
+                            console.log(`🌍 CATACLYSM: Saved ${game.impactSurvivors.length} survivors from ${nations.filter(n => game.impactSurvivors.some(s => s.nationId === n.id)).length} nations`);
                         }
                         
                         // Gradually convert units (but skip the saved survivors)
