@@ -11599,7 +11599,8 @@
                 evaluateCataclysm(totalDestruction);
             } else {
                 // CLICK EMPTY SPACE: small divine detonation
-                Audio.playSelfDestruct(clickX, clickY);
+                Audio.playAlertTone(); // Non-spatial alert
+                Audio.playArtillery(clickX, clickY); // Spatial explosion
                 Audio.announce('Divine judgment strikes', 'low');
                 const blastRadius = 80;
                 // Damage all units in blast radius
